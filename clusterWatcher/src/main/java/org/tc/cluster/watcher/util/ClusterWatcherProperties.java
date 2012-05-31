@@ -1,98 +1,130 @@
 package org.tc.cluster.watcher.util;
 
+import static java.io.File.separator;
+
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.net.URL;
+import java.io.InputStream;
 import java.util.Properties;
 
+import org.apache.commons.io.IOUtils;
+import org.apache.log4j.FileAppender;
+import org.apache.log4j.Layout;
 import org.apache.log4j.Logger;
-
+import org.apache.log4j.PatternLayout;
+import org.apache.log4j.RollingFileAppender;
 
 public class ClusterWatcherProperties {
 
-	private static final Logger LOG	= Logger.getLogger(ClusterWatcherProperties.class);
-	private static final Properties props = new Properties();
-	public static int INITIAL_RETRIES;
+	private static final String NL = "\n\t";
+	public static final String LOGS_DIR = "logs.dir";
+	public static Logger LOG = Logger.getLogger("ClusterWatcher");
 
-	public static int LOW_TXR_THRESHOLD;
-	public static long PROBE_INTERVAL;
-	public static long ONE_ACTIVE_MAX_CHECK;
-	public static long MISSING_CLIENT_MAX_CHECK;
-	public static long LOW_TXR_MAX_CHECK;
-	public static long CLUSTER_DOWN_MAX_CHECK;
-	public static long CLIENT_COUNTS;
-	public static String TC_CONFIG;
-	public static boolean CHECK_CLUSTER_DOWN;
+	private final Properties props = new Properties();
+	private String smtpServer, recipients, smtpUsername, smtpPasswd;
+	private String systemStatsLog, terracottaStatsLog, dgcStatsLog, opsStatsLog;
 
-	private static void printProps(){
-		LOG.info("ClusterWatcher Properties - " +
-				"\n\ttc-config url: " + TC_CONFIG +
-				"\n\tClient Count: " + CLIENT_COUNTS +
-				"\n\tInitial Retries (5s): " + INITIAL_RETRIES +
-				"\n\tProbe interval: " + PROBE_INTERVAL + " ms" +
-				"\n\tOne Active Server Max Check: " + ONE_ACTIVE_MAX_CHECK +
-				"\n\tMissing Clients Max Check: " + MISSING_CLIENT_MAX_CHECK +
-				"\n\tCluster Down Max Check: " + CLUSTER_DOWN_MAX_CHECK	 +
-				"\n\tLow Txn Max Check: " + LOW_TXR_MAX_CHECK +
-				"\n\tLow Txn Threshold: " + LOW_TXR_THRESHOLD);
+	private int mailInterval;
+	private int initialRetries;
+
+	private int lowTxnThreshold;
+	private long probeInterval;
+	private long oneActiveMaxCheck;
+	private long missingClientMaxCheck;
+	private long lowTxnMaxCheck;
+	private long clusterDownMaxCheck, serverDownMaxCheck;
+	private long clientCount;
+	private String tcConfig;
+	private boolean checkClusterDown;
+	private boolean checkWriteTps;
+
+	private void refresh() {
+		lowTxnThreshold = getPropertyAsInt("low.txr.threshold", 5);
+		probeInterval = toMillis(getProperty("probe.interval", "5s"));
+		oneActiveMaxCheck = getPropertyAsInt("one.active.max.check", 24);
+		missingClientMaxCheck = getPropertyAsInt("missing.client.max.check", 24);
+		lowTxnMaxCheck = getPropertyAsInt("low.txr.max.check", 24);
+		clusterDownMaxCheck = getPropertyAsInt("cluster.down.max.check", 24);
+		serverDownMaxCheck = getPropertyAsInt("server.down.max.check", 24);
+		clientCount = getPropertyAsInt("clientcount", 0);
+		tcConfig = getProperty("tc-config.url", "localhost:9510");
+		checkClusterDown = getBoolean("cluster.down.check", false);
+		initialRetries = getPropertyAsInt("initial.retries", 6);
+		checkWriteTps = getBoolean("check.write.tps", false);
+
+		String logs = getProperty(LOGS_DIR, "logs");
+		systemStatsLog = logs + separator + "system.stats.csv";
+		terracottaStatsLog = logs + separator + "tc.stats.csv";
+		dgcStatsLog = logs + separator + "dgc.stats.csv";
+		opsStatsLog = logs + separator + "ops.log";
+
+		smtpServer = getProperty("smtp.host");
+		recipients = getProperty("recipients");
+		smtpUsername = getProperty("smtp.username");
+		smtpPasswd = getProperty("smtp.password");
+		mailInterval = getPropertyAsInt("mail.interval", 6 * 3600);
+
+		updateLogLocation(logs + separator + "cluster-watcher.log");
 	}
 
-	private static void refresh(){
-		LOW_TXR_THRESHOLD        	= getPropertyAsInt("low.txr.threshold" , 5);
-		PROBE_INTERVAL           	= toMillis(getProperty("probe.interval" , "5s"));
-		ONE_ACTIVE_MAX_CHECK     	= getPropertyAsInt("one.active.max.check" , 24);
-		MISSING_CLIENT_MAX_CHECK 	= getPropertyAsInt("missing.client.max.check" , 24);
-		LOW_TXR_MAX_CHECK        	= getPropertyAsInt("low.txr.max.check" , 24);
-		CLUSTER_DOWN_MAX_CHECK    	= getPropertyAsInt("cluster.down.max.check" , 24);
-		CLIENT_COUNTS 				= getPropertyAsInt("clientcount" , 0);
-		TC_CONFIG					= getProperty("tc-config.url","localhost:9510");
-		CHECK_CLUSTER_DOWN			= getBoolean("cluster.down.check", false);
-		INITIAL_RETRIES				= getPropertyAsInt("initial.retries", 24);
-	}
-
-	public static void loadProperties(String propertyFile){
+	private void updateLogLocation(String logs){
 		try {
-			props.clear();
-			URL resUrl = new URL("file:" + propertyFile);
-			props.load(resUrl.openStream());
-			//      props.list(System.out);
-			props.putAll(System.getProperties());
-			refresh();
-			printProps();
+			Layout layout = new PatternLayout("%d %-5p [%c{1}] %m%n ");
+			FileAppender fap = new RollingFileAppender(layout, logs);
+			LOG.removeAllAppenders();
+			LOG.addAppender(fap);
 		} catch (IOException e) {
 			e.printStackTrace();
-			System.exit(1);
 		}
 	}
 
-	public static void loadProperties(Properties p){
+	public ClusterWatcherProperties(String propertyFile) {
+		try {
+			props.clear();
+			InputStream fis = new FileInputStream(propertyFile);
+			props.load(fis);
+			IOUtils.closeQuietly(fis);
+			props.putAll(System.getProperties());
+			refresh();
+		} catch (FileNotFoundException e) {
+			e.printStackTrace();
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+	}
+
+	public ClusterWatcherProperties(Properties p) {
 		props.clear();
 		props.putAll(p);
 		refresh();
 		LOG.info("Loaded properties: " + props);
-		printProps();
 	}
 
-	public static String getProperty(String key) {
+	private String getProperty(String key) {
 		return props.getProperty(key);
 	}
 
-	public static String getProperty(String key, String defaultVal) {
+	private String getProperty(String key, String defaultVal) {
 		return props.getProperty(key, defaultVal);
 	}
 
-	public static int getPropertyAsInt(String name, int defaultVal) {
-		return Integer.parseInt(getProperty(name, String.valueOf(defaultVal)).trim());
+	private int getPropertyAsInt(String name, int defaultVal) {
+		return Integer.parseInt(getProperty(name, String.valueOf(defaultVal))
+				.trim());
 	}
 
-	public static double getPropertyAsDouble(String name, double defaultVal) {
-		return Double.parseDouble(getProperty(name, String.valueOf(defaultVal)).trim());
+/*	private double getPropertyAsDouble(String name, double defaultVal) {
+		return Double.parseDouble(getProperty(name, String.valueOf(defaultVal))
+				.trim());
 	}
 
-	public static long getPropertyAsLong(String name, long defaultVal) {
-		return Long.parseLong(getProperty(name, String.valueOf(defaultVal)).trim());
-	}
+	private long getPropertyAsLong(String name, long defaultVal) {
+		return Long.parseLong(getProperty(name, String.valueOf(defaultVal))
+				.trim());
+	}*/
 
-	public static boolean getBoolean(String key, boolean defaultVal) {
+	private boolean getBoolean(String key, boolean defaultVal) {
 		String value = getProperty(key);
 		if (value != null) {
 			return Boolean.valueOf(value);
@@ -100,7 +132,7 @@ public class ClusterWatcherProperties {
 		return Boolean.valueOf(defaultVal);
 	}
 
-	public static long toMillis(String time) {
+	private long toMillis(String time) {
 		String[] parts = time.trim().split(":");
 		long millis = 0L;
 		for (String part : parts) {
@@ -116,5 +148,111 @@ public class ClusterWatcherProperties {
 			}
 		}
 		return millis;
+	}
+
+	public String getSmtpServer() {
+		return smtpServer;
+	}
+
+	public String getRecipients() {
+		return recipients;
+	}
+
+	public String getSmtpUsername() {
+		return smtpUsername;
+	}
+
+	public String getSmtpPasswd() {
+		return smtpPasswd;
+	}
+
+	public String getSystemStatsLog() {
+		return systemStatsLog;
+	}
+
+	public String getTerracottaStatsLog() {
+		return terracottaStatsLog;
+	}
+
+	public int getMailInterval() {
+		return mailInterval;
+	}
+
+	public int getInitialRetries() {
+		return initialRetries;
+	}
+
+	public int getLowTxnThreshold() {
+		return lowTxnThreshold;
+	}
+
+	public long getProbeInterval() {
+		return probeInterval;
+	}
+
+	public long getOneActiveMaxCheck() {
+		return oneActiveMaxCheck;
+	}
+
+	public long getMissingClientMaxCheck() {
+		return missingClientMaxCheck;
+	}
+
+	public long getLowTxnMaxCheck() {
+		return lowTxnMaxCheck;
+	}
+
+	public long getClusterDownMaxCheck() {
+		return clusterDownMaxCheck;
+	}
+
+	public long getClientCount() {
+		return clientCount;
+	}
+
+	public String getTcConfig() {
+		return tcConfig;
+	}
+
+	public boolean isCheckClusterDown() {
+		return checkClusterDown;
+	}
+
+	public String getDgcStatsLog() {
+		return dgcStatsLog;
+	}
+
+	public String getOpsStatsLog() {
+		return opsStatsLog;
+	}
+
+	public boolean isCheckWriteTps() {
+		return checkWriteTps;
+	}
+
+	@Override
+	public String toString() {
+		StringBuilder sb = new StringBuilder();
+		sb.append("ClusterWatcher Properties - ").append(NL)
+				.append("tc-config url: ").append(tcConfig).append(NL)
+				.append("Client Count: ").append(clientCount).append(NL)
+				.append("Initial Retries (5s): ").append(initialRetries)
+				.append(NL).append("Probe interval: ").append(probeInterval)
+				.append(" ms").append(NL)
+				.append("One Active Server Max Check: ")
+				.append(oneActiveMaxCheck).append(NL)
+				.append("Missing Clients Max Check: ")
+				.append(missingClientMaxCheck).append(NL)
+				.append("Cluster Down Max Check: ").append(clusterDownMaxCheck)
+				.append(NL).append("Low Txn Max Check: ")
+				.append(lowTxnMaxCheck).append(NL)
+				.append("Low Txn Threshold: ").append(lowTxnThreshold)
+				.append(NL).append("Check Cluster Down: ")
+				.append(checkClusterDown);
+		return sb.toString();
+	}
+
+	public long getServerDownMaxCheck() {
+		return serverDownMaxCheck;
 	}
 }

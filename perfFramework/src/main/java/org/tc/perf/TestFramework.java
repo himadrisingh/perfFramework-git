@@ -1,163 +1,178 @@
 package org.tc.perf;
 
-import static org.tc.perf.util.SharedConstants.RUNNING_TESTS;
-import static org.tc.perf.util.SharedConstants.TC_CONFIG_URL;
-import static org.tc.perf.util.SharedConstants.WORK_QUEUE;
+import static org.tc.perf.util.Utils.FW_TC_CONFIG_URL;
+import static org.tc.perf.util.Utils.sleepThread;
 
-import java.io.Serializable;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-import net.sf.ehcache.Cache;
-import net.sf.ehcache.Element;
-
 import org.apache.log4j.Logger;
+import org.tc.perf.cache.DataCache;
+import org.tc.perf.cache.TestCache;
+import org.tc.perf.cache.WorkQueueCache;
 import org.tc.perf.process.ProcessState;
-import org.tc.perf.util.CacheGenerator;
-import org.tc.perf.util.CommonUtils;
 import org.tc.perf.util.Configuration;
-import org.tc.perf.util.SharedConstants;
-import org.tc.perf.work.items.Work;
+import org.tc.perf.work.AbortWork;
+import org.tc.perf.work.Work;
 import org.terracotta.api.TerracottaClient;
 import org.terracotta.cluster.ClusterInfo;
 import org.terracotta.cluster.ClusterNode;
 
 /**
- * 
- * This is the abstract class which creates all the distributed cache required
+ *
+ * Abstract class which creates all the distributed cache required
  * by the framework. It also maintains the work queue and access to the test
  * data.
- * 
+ *
  * @author Himadri Singh
+ * @see WorkQueueCache
+ * @see DataCache
+ * @see TestCache
  */
-public abstract class TestFramework {
+abstract class TestFramework {
 
 	private static final Logger log = Logger.getLogger(TestFramework.class);
 
-	/**
+	/*
 	 * Not using toolkit BlockingQueue as we need to share our custom class Work
-	 * and toolkit allows only literals. We can probably write our own methods
-	 * to return byte[].
+	 * and toolkit allows only literals. We can hydrate/dehydrate to make it
+	 * work
 	 */
 
-	private final Cache workQueue, running;
+	protected final WorkQueueCache workQueue;
+	protected final TestCache testCache;
 
 	public TestFramework() {
-		this.workQueue = CacheGenerator.getCache(WORK_QUEUE);
-		this.running = CacheGenerator.getCache(RUNNING_TESTS);
+		this.workQueue = new WorkQueueCache();
+		this.testCache = new TestCache();
 	}
 
 	/**
-	 * Creates a new cache specifically for test id, with name as testUniqueId
-	 * 
-	 * @param testUniqueId
-	 *            Unique Id for test started
+	 * Clears the work queue and aborts the all the current tasks.
+	 *
+	 * @param test
+	 *            test configuration
+	 * @param abort
+	 *            if abort is true, it will the processes running on the agents
+	 *            too
+	 * @see AbortWork
 	 */
-
-	protected Cache getDataCache(String testUniqueId) {
-		return CacheGenerator.getCache(testUniqueId);
+	protected void clearAll(Configuration test, boolean abort) {
+		Set<String> hosts = test.getAllmachines();
+		// Clear the work queue first.
+		log.info("Clearing work queue...");
+		for (String h : hosts) {
+			workQueue.remove(h);
+			if (abort)
+				workQueue.put(h, new AbortWork(Configuration.EMPTY));
+		}
+		try {
+			waitForWorkCompletion(hosts, test.getWorkTimeout());
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
 	}
 
 	/**
-	 * Put to workQueue, create a copyOnWriteArrayList
-	 * 
-	 * @param host
-	 *            hostname
-	 * @param workList
-	 *            list of work to be done by this host
-	 */
-
-	private void putToWorkQueue(final String host, final List<Work> workList) {
-		Element elem = new Element(host, workList);
-		workQueue.put(elem);
-	}
-
-	/**
-	 * Adds work items to the common work cache for a host
-	 * 
-	 * @param host
-	 *            The hostname for the machine that will do the work
+	 * Adds work items to the {@link WorkQueueCache} for a host and waits for
+	 * its completion.
+	 *
+	 * @param hosts
+	 *            The list of hostnames of the {@link Agent} that will execute
+	 *            the work
 	 * @param work
 	 *            The work to be executed
+	 * @param timeout
+	 *            time after which work will timeout and mark it as a failure
+	 *            case.
+	 * @see #waitForWorkCompletion(Collection, int)
 	 */
 
-	protected void addToWorkQueue(final String host, final Work work) {
-		List<Work> workList = new ArrayList<Work>(getWork(host));
-
-		log.info(String.format("Adding work %s to %s.", work.getClass()
-				.getName(), host));
-		workList.add(work);
-
-		putToWorkQueue(host, workList);
+	protected void executeWork(final Collection<String> hosts, final Work work, int timeout)
+			throws Exception {
+		for (String host : hosts)
+			workQueue.put(host, work);
+		waitForWorkCompletion(hosts, timeout);
 	}
 
 	/**
-	 * Updates the Work for this host in the work queue with the new state
-	 * 
+	 * Adds work items to the {@link WorkQueueCache} for a host and waits for
+	 * its completion.
+	 *
+	 * @param host
+	 *            The hostname of the {@link Agent} that will execute
+	 *            the work
 	 * @param work
-	 *            The updated Work object
+	 *            The work to be executed
+	 * @param timeout
+	 *            time after which work will timeout and mark it as a failure
+	 *            case.
+	 * @see #waitForWorkCompletion(Collection, int)
 	 */
 
-	protected void updateWork(final String host, final List<Work> work) {
-		putToWorkQueue(host, work);
+	protected void executeWork(final String host, final Work work, int timeout)
+			throws Exception {
+		List<String> hosts = new ArrayList<String>();
+		hosts.add(host);
+		executeWork(hosts, work, timeout);
 	}
 
 	/**
-	 * Clear the Work for this host in the work queue for error state
+	 * Adds work items to the {@link WorkQueueCache} for a host and waits for
+	 * its completion. No timeout is set, it will wait till the process finishes
+	 * or crashes.
+	 *
+	 * @param hosts
+	 *            The list of hostnames of the {@link Agent} that will execute
+	 *            the work
+	 * @param work
+	 *            The work to be executed
+	 * @see #waitForWorkCompletion(Collection, int)
 	 */
 
-	protected void clearWork(String host) {
-		workQueue.remove(host);
-	}
-
-	/**
-	 * Add the new test record to running test cache. It adds the machines being
-	 * used by the test. Required to make sure that the new test doesnt overlaps
-	 * with the previous one.
-	 */
-
-	protected void addToRunningTests(Configuration config) {
-		log.info("Starting test with ID : " + config.getTestUniqueId());
-		getRunningTestCache().put(
-				new Element(config.getTestUniqueId(), config.getAllmachines()));
+	protected void executeWorkTillFinish(final Collection<String> hosts,
+			final Work work) throws Exception {
+		for (String host : hosts)
+			workQueue.put(host, work);
+		waitForWorkCompletion(hosts, -1);
 	}
 
 	/**
 	 * Check to make sure that the new test machines doesnt overlaps with the
 	 * previous one.
-	 * 
+	 *
 	 * @throws IllegalStateException
 	 *             if being used by any other test
 	 */
 
-	@SuppressWarnings("unchecked")
 	protected void checkForUsedAgents(Configuration config) {
-		List<String> superList = config.getAllmachines();
+		Set<String> superList = config.getAllmachines();
 
-		List<String> tests = getRunningTestCache().getKeys();
-		for (String t : tests) {
-			List<String> machinesUsed = (List<String>) getRunningTestCache()
-			.get(t).getValue();
+		List<Configuration> tests = testCache.getAllTests();
+		for (Configuration test : tests) {
+			if (!test.isRunning())
+				continue;
+
+			Set<String> machinesUsed = test.getAllmachines();
 			machinesUsed.retainAll(superList);
 			if (machinesUsed.size() > 0) {
-				String used = "";
-				for (String m : machinesUsed)
-					used += m + " , ";
-				throw new IllegalStateException(used
-						+ " is/are being used by test id: " + t);
+				throw new IllegalStateException(machinesUsed
+						+ " is/are being used by test id: "
+						+ test.getUniqueId());
 			}
 		}
 	}
 
 	/**
 	 * Checks for connected Agents
-	 * 
+	 *
 	 * @throws IllegalStateException
 	 *             if required agents are not connected
 	 */
@@ -167,34 +182,31 @@ public abstract class TestFramework {
 		if (agents.isEmpty()) {
 			throw new IllegalStateException(
 					"No Agents are found connected to f/w terracotta server: "
-					+ SharedConstants.TC_CONFIG_URL
-					+ ". Are you sure Agents are running?");
+							+ FW_TC_CONFIG_URL
+							+ ". Are you sure Agents are running?");
 		}
 
 		List<String> superList = new ArrayList<String>(config.getAllmachines());
 		if (superList.removeAll(agents) && superList.size() > 0) {
-			String missing = "";
-			for (String m : superList)
-				missing += m + " , ";
-
 			throw new IllegalStateException(
 					"Not all agents required by this test are connected to fw server: "
-					+ SharedConstants.TC_CONFIG_URL
-					+ ". Missing Agents List: " + missing);
+							+ FW_TC_CONFIG_URL + ".\n\tMissing Agents List: "
+							+ superList + "\n\tConnected Agents List: "
+							+ agents);
 		}
 	}
 
 	/**
-	 * Returns the list of connected agents to <code>TC_CONFIG_URL</code>
-	 * 
+	 * Returns the list of connected agents to <code>FW_TC_CONFIG_URL</code>
+	 *
 	 * @return {@link List} list of connected agents
 	 */
 
-	private List<String> getConnectedAgents() {
-		ClusterInfo info = (new TerracottaClient(TC_CONFIG_URL)).getToolkit()
-		.getClusterInfo();
+	protected List<String> getConnectedAgents() {
+		ClusterInfo info = (new TerracottaClient(FW_TC_CONFIG_URL)).getToolkit()
+				.getClusterInfo();
 		Collection<ClusterNode> listOfAgents = info.getClusterTopology()
-		.getNodes();
+				.getNodes();
 
 		// Remove Master Node from the agent lists
 		listOfAgents.remove(info.getCurrentNode());
@@ -203,9 +215,9 @@ public abstract class TestFramework {
 		for (ClusterNode agent : listOfAgents) {
 			try {
 				agentNames
-				.add((agent.getAddress().getHostName().toLowerCase()));
+						.add((agent.getAddress().getCanonicalHostName().toLowerCase()));
 				log.debug("Agents found: "
-						+ agent.getAddress().getHostName().toLowerCase());
+						+ agent.getAddress().getCanonicalHostName().toLowerCase());
 			} catch (UnknownHostException e) {
 				log.error("Unknown Agent found " + agent, e);
 			}
@@ -214,90 +226,86 @@ public abstract class TestFramework {
 	}
 
 	/**
-	 * Gets work items from the common work cache for a host CopyOnRead list.
-	 * 
-	 * @param host
-	 *            The hostname for the machine is doing the work
-	 * 
-	 * @return the Work instance for this host. If no work was found, null will
-	 *         be returned.
-	 */
-
-	protected List<Work> getWork(String host) {
-		Element e = workQueue.get(host);
-		if (e != null) {
-			Serializable val = e.getValue();
-			if (val instanceof List<?>)
-				return new ArrayList<Work>((List<Work>) val);
-			else
-				throw new IllegalStateException(
-						"List of work expected but got " + val.getClass());
-		} else
-			return Collections.emptyList();
-	}
-
-	/**
-	 * Wait for work to finish on all hosts.
-	 * 
+	 * Wait for work to finish/fail/timeout on the list of hosts. It keeps on
+	 * polling {@link WorkQueueCache} for the {@link Work} alloted to the hosts.
+	 * {@link Agent} will be executing the work and updating the
+	 * {@link ProcessState} of the work, which is monitored here. <br/>
+	 * Once each work reaches in started or finished state it moves to the next
+	 * phase.<br/>
+	 * Timeout and failed state throws Exception.
+	 *
 	 * @param hosts
-	 *            A list of hosts to wait for.
-	 * @param timeoutMins
-	 *            A timeout in minutes for the jobs to complete.
-	 * 
+	 *            The list of hosts to monitor.
+	 * @param timeoutInSecs
+	 *            A timeout in seconds for the jobs to complete. timeoutInSecs =
+	 *            -1 for Infinite wait.
+	 *
 	 * @throws TimeoutException
-	 *             If the job doesn't complete within the specified timeout
+	 *             If the work doesn't complete within the specified timeout
+	 *
+	 * @throws Exception
+	 *             If work running on agent fails with some exception
 	 */
-	protected void waitForWorkCompletion(final List<String> hosts,
-			final int timeoutMins) throws Exception {
+	private void waitForWorkCompletion(final Collection<String> hosts,
+			final int timeoutInSecs) throws Exception {
+		TimeUnit.SECONDS.sleep(2);
+
 		List<String> pendingHosts = new ArrayList<String>(hosts);
 		Calendar timeout = Calendar.getInstance();
-		timeout.add(Calendar.MINUTE, timeoutMins);
-		while (!pendingHosts.isEmpty()) {
-			for (String host : hosts) {
-				List<Work> workList = getWork(host);
+		timeout.add(Calendar.SECOND, timeoutInSecs);
 
+		// TODO: Check why worklist are not updated
+		// checking error state only when executeWorkTillFinish is called.
+		while (!pendingHosts.isEmpty() && !workQueue.isEmpty()
+				&& !(testCache.isErrorState() && timeoutInSecs < 0)) {
+
+			for (String host : hosts) {
+				List<Work> workList = workQueue.get(host);
 				Iterator<Work> iter = workList.iterator();
+
 				while (iter.hasNext()) {
 					Work work = iter.next();
 					ProcessState state = work.getState();
-					if (state.isStarted() || state.isFinished())
+					log.debug(work + " : " + state);
+					if (state.isStarted() || state.isFinished()) {
 						iter.remove();
+					}
 
 					if (state.isTimeout()) {
-						iter.remove();
+						workQueue.remove(host);
 						throw new TimeoutException("Test job failed since "
 								+ host + " didnt completed the task due to "
 								+ state.getFailureReason());
 					}
 					if (state.isFailed()) {
-						iter.remove();
+						workQueue.remove(host);
 						throw new Exception("Job execution Failed. Reason: "
 								+ state.getFailureReason());
 					}
 				}
 				if (workList.isEmpty()) {
-					clearWork(host);
+					workQueue.remove(host);
 					pendingHosts.remove(host);
+					if (pendingHosts.size() > 0){
+						log.debug("===========================================");
+						for (String h: pendingHosts)
+							log.debug("Pending hosts: " + h + " : " + workQueue.get(h));
+						log.debug("===========================================");
+					}
 				}
+				sleepThread(1000);
 			}
 		}
-		CommonUtils.sleep(1000);
-		if (Calendar.getInstance().after(timeout)) {
+
+		if (testCache.isErrorState() && timeoutInSecs < 0) {
+			for (String host : hosts)
+				workQueue.remove(host);
+		}
+
+		if (timeoutInSecs > 0 && Calendar.getInstance().after(timeout)) {
 			log.error("Timed out waiting for jobs to finish on: " + hosts);
-			throw new TimeoutException("Exceeded timeout of " + timeoutMins
-					+ " minutes");
+			throw new TimeoutException("Exceeded timeout of " + timeoutInSecs
+					+ " seconds");
 		}
 	}
-
-	/**
-	 * Returns the cache containing the running tests unique id and machines
-	 * used by them.
-	 * 
-	 * @return cache containing running tests
-	 */
-
-	public Cache getRunningTestCache() {
-		return running;
-	}
-
 }

@@ -1,0 +1,56 @@
+
+# =====================================================
+# test properties
+# =====================================================
+
+directories: code/target/
+
+# classpath: files to be included in classpath. Java regex patterns are allowed.
+classpath: .*jar .*xml .*properties
+
+classpath.exclude: ehcache-.*jar terracotta.*jar
+
+# main-classname: main class name that should start the test
+main-classname: com.terracotta.EhCachePerfTest
+
+# arguments: arguments to be passed, can be properties file (that should be in classpath)
+# arguments: mvn-tc-run.node.properties
+arguments: perf-framework.properties
+
+fw-tc-config-param: expressTerracottaUrl
+
+fw-node-count-param: numOfNodes
+
+# =====================================================
+# load process properties
+# =====================================================
+
+# load-main-classname: main class name that should start the load
+load-main-classname: 
+
+# load-arguments: arguments to be passed, can be properties file (that should be in classpath)
+load-arguments: 
+
+
+# directories: directories to be searched for jars/xmls/etc. These can be multiple space separated values.
+# Can just point to target directory created by maven.
+# Its advised to use maven to collect all the dependences of the project.
+# Add following plugin to the project pom to get all dependencies in target/dependency
+#	<build>
+#	  <plugins>
+#		...
+#		<plugin>
+#	  	  <groupId>org.apache.maven.plugins</groupId>
+#		  <artifactId>maven-dependency-plugin</artifactId>
+#		  <executions>
+#		    <execution>
+#		      <goals>
+#			<goal>copy-dependencies</goal>
+#		      </goals>
+#		    </execution>
+#		  </executions>
+#		</plugin>
+#	  <plugins>
+#	<build>
+# target/ target/dependencies/ target/classes
+

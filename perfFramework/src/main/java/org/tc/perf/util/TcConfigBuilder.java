@@ -1,7 +1,8 @@
 package org.tc.perf.util;
+import static java.io.File.separator;
+import static org.tc.perf.util.Utils.TC_CONFIG;
 
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -13,31 +14,38 @@ import java.util.Map;
 import org.apache.log4j.Logger;
 
 /**
- * 
+ *
  * It builds the terracotta config according to the configuration.
- * 
+ *
  * @author Himadri Singh
  */
 public class TcConfigBuilder {
 
 	private static final Logger log = Logger.getLogger(TcConfigBuilder.class);
 
-	private static final String TC_CONFIG = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-		+ "<tc:tc-config xsi:schemaLocation=\"http://www.terracotta.org/config http://www.terracotta.org/schema/terracotta-4.xsd\"\n"
-		+ "xmlns:tc=\"http://www.terracotta.org/config\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">\n%s\n</tc:tc-config>";
+	private static final String HEADER = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+		"<tc:tc-config xsi:schemaLocation=\"http://www.terracotta.org/config " +
+				"http://www.terracotta.org/schema/terracotta-4.xsd\"\n" +
+		"xmlns:tc=\"http://www.terracotta.org/config\" " +
+				"xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">\n%s\n</tc:tc-config>";
 	private static final String SERVER = "  <server host=\"%s\" name=\"%s\">\n";
-	private static final String SERVER_DATA = "\t<data>%s/server/server-%s-%%h-data</data>\n";
-	private static final String SERVER_LOG = "\t<logs>%s/server/server-%s-%%h-logs/logs</logs>\n";
-	private static final String SERVER_STAT = "\t<statistics>%s/server/server-%s-%%h-statistics</statistics>\n";
+	private static final String SERVER_DATA = "%s" + separator +
+		"server" + separator + "terracotta-server-%s-%%h-data";
+	private static final String SERVER_DATA_TAG = "\t<data>%s</data>\n";
+	private static final String SERVER_LOG = "\t<logs>%s" + separator +
+		"server" + separator + "terracotta-server-%s-%%h-logs</logs>\n";
+	private static final String SERVER_STAT = "\t<statistics>%s" + separator +
+		"server" + separator + "terracotta-server-%s-%%h-statistics</statistics>\n";
 	private static final String DSO_PORT = "\t<dso-port>%s</dso-port>\n";
 	private static final String JMX_PORT = "\t<jmx-port>%s</jmx-port>\n";
 	private static final String GROUP_PORT = "\t<l2-group-port>%s</l2-group-port>\n";
-	private static final String DGC = "\t<garbage-collection>\n\t\t<enabled>%b</enabled>\n"
-		+ "\t\t<verbose>true</verbose>\n\t\t<interval>%d</interval>\n\t</garbage-collection> ";
-	private static final String CLIENT_LOG = "<clients>\n\t<logs>%s/client-%%h-logs/logs</logs>\n</clients>";
-	private static final String PERSISTENCE = "\t<persistence>\n\t\t<mode>%s</mode>"
-		+ "\n\t\t<offheap>\n\t\t\t<enabled>%b</enabled>\n\t\t\t<maxDataSize>%s</maxDataSize>"
-		+ "\n\t\t</offheap>\n\t</persistence>\n";
+	private static final String DGC = "\t<garbage-collection>\n\t\t<enabled>%b</enabled>\n" +
+		"\t\t<verbose>true</verbose>\n\t\t<interval>%d</interval>\n\t</garbage-collection> ";
+	private static final String CLIENT_LOG = "<clients>\n\t<logs>%s" + separator +
+		"client" + separator + "terracotta-client-%%(node-name)-%%h-logs</logs>\n</clients>";
+	private static final String PERSISTENCE = "\t<persistence>\n\t\t<mode>%s</mode>" +
+		"\n\t\t<offheap>\n\t\t\t<enabled>%b</enabled>\n\t\t\t<maxDataSize>%s</maxDataSize>" +
+		"\n\t\t</offheap>\n\t</persistence>\n";
 	private final Configuration config;
 
 	public TcConfigBuilder(final Configuration config) {
@@ -45,7 +53,7 @@ public class TcConfigBuilder {
 	}
 
 	private String build() {
-		String location = new File(config.getLocation()).getAbsolutePath();
+		String location = config.getLocation().getAbsolutePath() + "/logs/";
 		StringBuilder server = new StringBuilder("  <servers>");
 
 		// List of server name to be used in creating mirror groups.
@@ -60,7 +68,12 @@ public class TcConfigBuilder {
 			serverList.add(servername);
 			server.append(String.format(SERVER, l2, servername));
 			server.append(String.format(SERVER_LOG, location, "952" + port));
-			server.append(String.format(SERVER_DATA, location, "952" + port));
+
+			String dataDir = config.getServerDataDir(servername);
+			if (dataDir.trim().isEmpty())
+				dataDir = String.format(SERVER_DATA, location, "952" + port);
+			server.append(String.format(SERVER_DATA_TAG, dataDir));
+
 			server.append(String.format(SERVER_STAT, location, "952" + port));
 			server.append(String.format(DSO_PORT + JMX_PORT + GROUP_PORT, "951"
 					+ port, "952" + port, "953" + port));
@@ -93,28 +106,32 @@ public class TcConfigBuilder {
 
 		// Setting client log location
 		String client = String.format(CLIENT_LOG, location);
-		return String.format(TC_CONFIG, server.toString() + client);
+		return String.format(HEADER, server.toString() + client);
 	}
 
 	/**
 	 * Creates the terracotta tc-config.xml as per the configuration and writes
 	 * it to file on disk in specified location.
-	 * 
+	 *
 	 * @param location
 	 *            directory path for tc-config.xml file.
 	 */
-	public void createConfig(String location) {
+	public File createConfig(File location) {
 		try {
-			String configPath = location + "/tc-config.xml";
-			FileOutputStream fos = new FileOutputStream(configPath);
+			File config = new File(location, TC_CONFIG);
+			FileOutputStream fos = new FileOutputStream(config);
 			String tcConfig = build();
 			log.info(String.format("tc-config.xml created at %s ... \n%s",
-					configPath, tcConfig));
+					config.getAbsoluteFile(), tcConfig));
 			fos.write(tcConfig.getBytes());
-		} catch (FileNotFoundException e) {
-			e.printStackTrace();
+			fos.close();
+			return config;
 		} catch (IOException e) {
-			e.printStackTrace();
+			throw new IllegalStateException("Cannot create tc-config.xml",e);
 		}
+	}
+
+	public static void main(String[] args){
+		System.out.println(String.format(CLIENT_LOG, "acc"));
 	}
 }

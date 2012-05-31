@@ -10,7 +10,7 @@ import java.io.Serializable;
  * finishes executing in ProcessThread</li> <li>FAILED is set when failed
  * abnormally</li> <li>TIMEOUT is set when process failed to start within
  * specified timeout period</li>
- * 
+ *
  * @author Himadri Singh
  */
 public class ProcessState implements Serializable {
@@ -23,27 +23,27 @@ public class ProcessState implements Serializable {
 	private State state = State.NOT_STARTED;
 	private String failureReason = "unknown";
 
-	public boolean isNotStarted() {
+	public synchronized boolean isNotStarted() {
 		return State.NOT_STARTED.equals(state);
 	}
 
-	public boolean isInitialized() {
+	public synchronized boolean isInitialized() {
 		return State.INITIALIZED.equals(state);
 	}
 
-	public boolean isStarted() {
+	public synchronized boolean isStarted() {
 		return State.STARTED.equals(state);
 	}
 
-	public boolean isFinished() {
+	public synchronized boolean isFinished() {
 		return State.FINISHED.equals(state);
 	}
 
-	public boolean isFailed() {
+	public synchronized boolean isFailed() {
 		return State.FAILED.equals(state);
 	}
 
-	public boolean isTimeout() {
+	public synchronized boolean isTimeout() {
 		return State.TIMEOUT.equals(state);
 	}
 
@@ -59,19 +59,17 @@ public class ProcessState implements Serializable {
 		this.state = State.FINISHED;
 	}
 
-	public synchronized void markFailed() {
+	public synchronized void markFailed(String reason) {
 		this.state = State.FAILED;
-	}
-
-	public synchronized void markTimeout() {
-		this.state = State.TIMEOUT;
-	}
-
-	public synchronized void setFailureReason(String reason) {
 		failureReason = reason;
 	}
 
-	public String getFailureReason() {
+	public synchronized void markTimeout(String reason) {
+		this.state = State.TIMEOUT;
+		failureReason = reason;
+	}
+
+	public synchronized String getFailureReason() {
 		return failureReason;
 	}
 

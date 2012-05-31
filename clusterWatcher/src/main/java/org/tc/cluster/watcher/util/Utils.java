@@ -1,5 +1,7 @@
 package org.tc.cluster.watcher.util;
 
+import static org.tc.cluster.watcher.util.ClusterWatcherProperties.LOG;
+
 import java.io.File;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -10,7 +12,6 @@ import java.util.Map.Entry;
 
 import javax.xml.xpath.XPathConstants;
 
-import org.apache.log4j.Logger;
 import org.tc.cluster.watcher.MirrorGroup;
 import org.tc.cluster.watcher.ServerStat;
 import org.w3c.dom.Node;
@@ -18,7 +19,6 @@ import org.w3c.dom.NodeList;
 
 
 public class Utils {
-	static final Logger LOG    = Logger.getLogger(Utils.class);
 
 	public static void merge(InputStream in, OutputStream out) {
 		StreamCopier sc = new StreamCopier(in, out);

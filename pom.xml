@@ -1,42 +1,89 @@
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
-   <modelVersion>4.0.0</modelVersion>
-   <groupId>org.terracotta</groupId>
-   <artifactId>perfFramework-parent</artifactId>
-   <version>1.0.0-SNAPSHOT</version>
-   <packaging>pom</packaging>
-   <name>PerfFramework Parent</name>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<groupId>org.terracotta</groupId>
+	<artifactId>perfFramework-parent</artifactId>
+	<version>1.0.0-SNAPSHOT</version>
+	<packaging>pom</packaging>
+	<name>PerfFramework Parent</name>
 
-  <licenses>
-    <license>
-      <name>Terracotta Public License</name>
-      <url>http://www.terracotta.org/license.txt</url>
-    </license>
-  </licenses>
+	<licenses>
+		<license>
+			<name>Terracotta Public License</name>
+			<url>http://www.terracotta.org/license.txt</url>
+		</license>
+	</licenses>
 
-  <properties>
-  	 <terracotta.version>3.5.0</terracotta.version>
-  	 <toolkit-runtime.version>3.0.0</toolkit-runtime.version>
-	 <ehcache-core.version>2.4.1</ehcache-core.version>
-	 <ehcache-terracotta.version>2.4.1</ehcache-terracotta.version>
-	 <tc-maven.version>1.6.2</tc-maven.version>
-  </properties>
-	
-  <modules>
-      <module>clusterWatcher</module>
-      <module>perfFramework</module>
-   </modules>
+	<properties>
+		<terracotta.version>3.6.0</terracotta.version>
+		<toolkit-runtime.version>4.0.0</toolkit-runtime.version>
+		<ehcache-core.version>2.5.0</ehcache-core.version>
+		<ehcache-terracotta.version>2.5.0</ehcache-terracotta.version>
+		<tc-maven.version>1.8.0</tc-maven.version>
+		<toolkit.spec>1.4</toolkit.spec>
+		<skipJavadoc>false</skipJavadoc>
+	</properties>
 
-   <repositories>
-      <repository>
-         <id>terracotta-repository</id>
-         <url>http://www.terracotta.org/download/reflector/releases</url>
-         <releases>
-            <enabled>true</enabled>
-         </releases>
-         <snapshots>
-            <enabled>true</enabled>
-         </snapshots>
-      </repository>
-   </repositories>
-   
+	<modules>
+		<module>clusterWatcher</module>
+		<module>perfFramework</module>
+		<module>tc-perf-maven-plugin</module>
+		<module>fw-packaging</module>
+	</modules>
+
+	<build>
+		<plugins>
+			<plugin>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<configuration>
+					<source>1.5</source>
+					<target>1.5</target>
+				</configuration>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-javadoc-plugin</artifactId>
+				<version>2.8.1</version>
+				<configuration>
+					<skip>${skipJavadoc}</skip>
+				</configuration>
+				<executions>
+					<execution>
+						<id>attach-javadocs</id>
+						<goals>
+							<goal>jar</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-source-plugin</artifactId>
+				<version>2.1.2</version>
+				<executions>
+					<execution>
+						<id>attach-sources</id>
+						<phase>package</phase>
+						<goals>
+							<goal>jar</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
+
+	<repositories>
+		<repository>
+			<id>terracotta-repository</id>
+			<url>http://www.terracotta.org/download/reflector/releases</url>
+			<releases>
+				<enabled>true</enabled>
+			</releases>
+			<snapshots>
+				<enabled>true</enabled>
+			</snapshots>
+		</repository>
+	</repositories>
+
 </project>

@@ -1,0 +1,269 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html>
+ <head>
+  <title>Performance Framework README</title>
+ </head>
+  <style>
+  body{
+  color: #585858 ;
+  font-family: "Helvetica";
+  }
+  pre {
+white-space: pre-wrap; /* css-3 */
+white-space: -moz-pre-wrap !important; /* Mozilla, since 1999 */
+white-space: -pre-wrap; /* Opera 4-6 */
+white-space: -o-pre-wrap; /* Opera 7 */
+word-wrap: break-word; /* Internet Explorer 5.5+ */
+color: 	#696969;
+background-color: 	#F8F8FF;
+}
+  </style>
+ <body>
+<div style="position:relative;margin:50px;">
+ <h1>Distributed Performance Framework</h1>
+ Distrbuted performance framework solves the basic problems with executing a number of performance tests on a large cluster. Running tests on multiple boxes is time consuming and error prone. 
+ <br/><br/>
+  This framework facilitates testing with Terracotta Server Array providing an easy management of the terracotta cluster. We can configure n number of terracotta servers and use the test to connect the TSA and execute the test.
+
+ <h2>1. Setup</h2>
+ It requires one time setup of the framework.
+
+<ol>
+<li>Extract the distributable zip.</li>
+<li>Start the framework server.	<pre>&lt;install-dir&gt;/bin/start-fw-server.sh</pre></li>
+<li>Start agents on required machines<pre>&lt;install-dir&gt;/bin/run-agent.sh &lt;fw-server-hostname&gt;</pre></li>
+</ol>
+
+Setup is done!
+
+<h2>2. Running tests</h2>
+Test can be executed in two ways:
+<ol>
+<li><a href="#mvn">Using Maven Plugin.</a> (recommended)</li>
+<li><a href="#script">Using scripts.</a></li>
+</ol>
+
+<a name="mvn">
+<h3>2.1. Using Maven plugin</h3>
+Maven is one of the popular project management tool. To execute test using mvn plugin for perf framework, 
+
+<ol>
+<li>include the following plugin into the pom.xml.
+
+<pre>
+
+ &lt;build&gt;
+  &lt;plugins&gt;
+	&lt;plugin&gt;
+		&lt;groupId&gt;org.terracotta&lt;/groupId&gt;
+		&lt;artifactId&gt;tc-perf-maven-plugin&lt;/artifactId&gt;
+		&lt;version&gt;1.0.0-SNAPSHOT&lt;/version&gt;
+		
+		&lt;!-- 
+			use appropriate version of ${terracotta.version}
+			change &lt;artifactId&gt;terracotta-ee&lt;/artifactId&gt; for enterprise version  
+			license-file should be in root dir.
+		--&gt;
+		
+		&lt;dependencies&gt;
+			&lt;dependency&gt;
+				&lt;groupId&gt;org.terracotta&lt;/groupId&gt;
+				&lt;artifactId&gt;terracotta&lt;/artifactId&gt;
+				&lt;version&gt;${terracotta.version}&lt;/version&gt;
+			&lt;/dependency&gt;
+		&lt;/dependencies&gt;
+
+		&lt;configuration&gt;
+		
+			&lt;frameworkTcConfigUrl&gt;${fw.server.hostname}:8510&lt;/frameworkTcConfigUrl&gt;
+			
+			&lt;!-- fill in main class of the test --&gt;
+			&lt;client	arguments="perf-framework.properties" 
+				className="${main.class}"&gt;
+				&lt;agents&gt;
+					&lt;agent&gt;agent01&lt;/agent&gt;
+					&lt;agent&gt;agent02&lt;/agent&gt;
+					&lt;agent&gt;agent03&lt;/agent&gt;
+				&lt;/agents&gt;
+			&lt;/client&gt;
+			
+			&lt;server&gt;
+				&lt;agents&gt;
+					&lt;agent&gt;agent04&lt;/agent&gt;
+					&lt;agent&gt;agent05&lt;/agent&gt;
+				&lt;/agents&gt;
+			&lt;/server&gt;
+		&lt;/configuration&gt;
+	&lt;/plugin&gt;
+  &lt;/plugins&gt;
+ &lt;/build&gt;
+
+</pre>
+</li>
+<li>run the test <pre>mvn clean install tc-perf:run</pre></li>
+</ol>
+
+<h4>2.1.1. Maven Plugin Goals</h4>
+<table>
+<tr><td>1.</td><td><pre>tc-perf:list</pre></td><td>
+lists all the test running in the perf f/w, with 
+the unique test id and machines used by the test.</td></tr>
+
+<tr><td>2.</td><td><pre>tc-perf:kill -Dfw.testId=&lt;test-id&gt;</pre></td><td>
+			kills the test and collects the logs, for particular
+			test id, listed by tc-perf:list
+</td></tr>
+
+<tr><td>3.</td><td><pre>tc-perf:dump-state</pre></td><td>
+
+			Dumps the state of perf f/w, what agents are running
+			on console.
+</td></tr>
+
+<tr><td>4.</td><td><pre>tc-perf:run-agent</pre></td><td>			
+			Starts the agent that will connect to the specified
+			perf f/w server.
+</td></tr>
+</table>
+
+<h4>2.1.2. Advanced Setup Configuration</h4>
+<ol>
+<li>More perf framework properties can be set through a property file
+ <pre>
+		&lt;configuration&gt;
+			&lt;frameworkProperties&gt;load.properties&lt;/frameworkProperties&gt;
+			....
+ 		&lt;configuration&gt;
+ </pre>	
+ 	This property file can be the test property file, if any. 
+	<ol> 	
+ 		<li>To enable crashing of TSA to test failover. We can specify
+ 			the interval after which server should be crashed and
+ 			restarted. 
+	 <pre>server.restart.${l2.hostname}-9520: 600 400</pre>
+
+			Above configuration will kill the test at t1=600, t2=600+400</li>
+	
+		<li>Restart repeat count: -1 (till the test is running)
+			
+			<pre>server.restart.repeat: -1 		</pre></li>
+
+		<li>Change data directory for the servers to other location.
+		
+			<pre>server.data.dir.${l2.hostname}-9520: /fioa/bench/perfTests/framework/data</pre></li>
+	</ol>
+</li>
+
+<li>Available parameters in plugin configuration.
+ 		<ul>
+ 		<li><b>Client Configuration</b><pre>&lt;client 
+	jvmargs="-Xmx2g -Dorg.terracotta.license.path=terracotta-license.key"
+	fw-tc-config-param="tc.config.url"
+	fw-node-count-param="nodes" 
+	arguments="perf-framework.properties" 
+	className="org.terracotta.offheap.TestRunner"&gt;</pre>
+	
+			<dl>
+			<dt>jvmargs:</dt>
+			<dd>(optional, but recommended) JVM arguments to be passed to test. 
+									Any tc properties set for L1 need to go here 
+									as jvm arg <pre>-Dcom.tc.&lt;tc.property&gt;=&lt;value&gt;</pre>
+									</dd>
+						
+			<dt>fw-tc-config-param:	</dt><dd>	(optional) For clustered tests, we might need to pass the tc-config url 
+									for the terracotta server to be consumed by the test. eg. Needed for
+									&lt;terracottaConfig&gt; for ehcache and might be needed for toolkit-runtime classes.
+									We can provide the name of the variable here, which will be replaced by
+									perf framework with tc-config file name created by it.
+									
+									This is set to perf-framework.properties.
+			</dd>
+			<dt>fw-node-count-param:</dt>	<dd>(optional) Test might need a variable stating the number of nodes to be run. 
+									The name of variable can be set here, which will be replaced by the number of 
+									agents specified in &lt;client&gt;.
+									
+									This is set to perf-framework.properties.
+									  </dd>
+			<dt>arguments:</dt><dd>			Program arguments to be passed to the test. 
+			
+									If its a property file,	use perf-framework.properties which will have properties
+									from  frameworkProperties file and modified fw-tc-config-param/fw-node-count-param.
+			</dd>
+			<dt>className:</dt><dd>				Full qualified name of Main-Class</dd>
+			</dl>
+		</li>
+		
+		<li><b>Server Configuration</b><pre>&lt;server 
+	jvmargs="-Xmx2g -XX:MaxDirectMemorySize=10g"
+	serversPerMirrorGroup="2"
+	persistenceEnabled="false"
+	offheapSize="9g"&gt;</pre>
+			<dl>
+			<dt>jvmargs:</dt><dd>				(optional, but recommended) JVM arguments to be passed to test. 
+									Any tc properties set for L2 need to go here 
+									as jvm arg <pre>-Dcom.tc.&lt;tc.property&gt;=&lt;value&gt;</pre>
+			</dd><dt>
+ 			serversPerMirrorGroup:</dt><dd>	Each TSA mirror group will have serversPerMirrorGroup servers. 
+ 									The groups will be made out of agents specified.
+ 					</dd><dt>			
+ 			persistenceEnabled:</dt><dd>		Terracotta persistence (true) or temp-swap (false)
+ 			</dd><dt>
+ 			offheapSize:</dt><dd>			L2 BigMemory size. Do specify <pre>-XX:MaxDirectMemorySize=&lt;offheap-size&gt;</pre> in jvm args for this.
+ 			</dd></dt>
+	</li>		
+		</ol>
+		</li>
+</ol>
+
+<a name="script">
+<h3>2.2. Using scripts</h3>
+To run the test using scripts in the framework distributable zip.
+
+<ol>
+<li>Check conf/load.properties and set kit-location, machines and other properties as per the test needs.</li>
+<li>test directories should be self-sufficient, i.e. containing all the jars needed for the test.<br>
+	<br/><br/>
+	The zip file contains ehcacheperf as default test, compile the project to download the artifacts using maven.
+	<pre>
+	cd test/ehcacheperf/code
+	mvn clean install
+	</pre>
+</li>
+<li>Start the test using script <pre>&lt;install-dir&gt;/bin/run-master.sh</pre></li>
+</ol>
+<h4>2.2.1. Adding a new test</h4>
+
+<ol>
+<li>Create the test dir skeleton using add-new-test.sh script.
+	<pre>&lt;install-dir&gt;/bin/add-new-test.sh &lt;testname&gt;</pre></li>
+<li>Check out the code into &lt;install-dir&gt;/tests/&lt;testname&gt;/code or copy the jars.</li>
+<li>Edit the test.defn to fill in the main class name and program arguments for the test, if any.</li>
+<li>Edit test.properties to add test properties, if any.</li>
+<li>Start the test f/w as per the instructions in previous section.</li>
+</ol>
+
+If its a maven project, use maven-dependency-plugin to copy all the dependency artifacts into a directory.<br/>
+Add following plugin to the project pom to get all dependencies in target/dependency
+<pre>
+	&lt;build&gt;
+	  &lt;plugins&gt;
+		...
+		&lt;plugin&gt;
+	  	  &lt;groupId&gt;org.apache.maven.plugins&lt;/groupId&gt;
+		  &lt;artifactId&gt;maven-dependency-plugin&lt;/artifactId&gt;
+		  &lt;executions&gt;
+		    &lt;execution&gt;
+		      &lt;goals&gt;
+			&lt;goal&gt;copy-dependencies&lt;/goal&gt;
+		      &lt;/goals&gt;
+		    &lt;/execution&gt;
+		  &lt;/executions&gt;
+		&lt;/plugin&gt;
+	  &lt;plugins&gt;
+	&lt;build&gt;
+</pre>
+
+Adding test to the framework can be trickier, that's why we recommend to use maven plugin. This is for the cases where we dont have internet connection or maven cant be installed.
+</div>
+ </body>
+</html>

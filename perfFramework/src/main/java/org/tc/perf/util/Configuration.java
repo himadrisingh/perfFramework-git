@@ -1,112 +1,134 @@
 package org.tc.perf.util;
 
+import static java.io.File.separatorChar;
+import static org.tc.perf.util.Utils.HEADER;
+import static org.tc.perf.util.Utils.HOSTNAME;
+import static org.tc.perf.util.Utils.loadProperties;
+
 import java.io.File;
-import java.io.FileInputStream;
+import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Date;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Properties;
+import java.util.Set;
 import java.util.UUID;
 
+import org.apache.commons.io.FileUtils;
 import org.apache.log4j.Logger;
 
 /**
- * Loads configuration file. Set default values.
- * 
+ * Loads configuration file. Set default values. <br/>
+ * <br/>
+ * Keys can be specified for specific hostname too. <br/>
+ * <br/>
+ * Priority level of the parameter: key.hostname > key <br/>
+ * the value for key.hostname will override the value for key
+ *
  * @author Himadri Singh
  */
 public class Configuration implements Serializable {
 
 	private static final long serialVersionUID = 1L;
 	private static final Logger log = Logger.getLogger(Configuration.class);
+	private static final String DOT = ".";
+	private static final String NL = "\n\t";
+	private static final String defnFileName = "test.defn";
 
+	public static final Configuration EMPTY = new Configuration();
+
+	private final String rootDir;
 	private final Properties props;
-	private final String kitLocation;
-	private final List<File> testDirectories;
-	private final List<String> classpathRegex;
-	private final List<String> logRegex;
-	private final String mainClass;
-	private final String location;
-	private final List<String> arguments;
-	private final List<String> l1_jvmArgs;
-	private final List<String> l2_jvmArgs;
-	private final List<String> load_jvmArgs;
-	private final String loadMainClass;
-	private final List<String> loadArguments;
+	private final String uniqueId, testName;
+	private final List<String> allCases;
+	private final String testCase;
+	private final boolean inline;
 
-	private final List<String> l2machines;
-	private final List<String> l1machines;
-	private final List<String> loadmachines;
-	private final List<String> allmachines = new ArrayList<String>();
+	/*
+	 * Test Data
+	 */
+	private static enum Status {
+		RUNNING, FINISHED, FAILED;
+	}
 
-	private final int serversPerMirrorGroup;
-	private final boolean dgcEnabled;
-	private final int dgcInterval;
-	private final String persistence;
-	private final boolean offheapEnabled;
-	private final String offheapMaxDataSize;
-	private final String licenseFileLocation;
-	private final String clientLogCheck;
+	private String resultLog = "NA";
+	private Status status;
+	private Date startTime, endTime;
+	private String errorMsg = "Unknown";
 
-	private final String testUniqueId;
+	/**
+	 * Just for empty Configuration
+	 */
+	private Configuration() {
+		props = null;
+		allCases = null;
+		testCase = null;
+		uniqueId = null;
+		testName = null;
+		rootDir = null;
+		inline = false;
+	}
 
-	private final String l1_javaHome;
-	private final String l2_javaHome;
+	public Configuration(final Properties properties) {
+		props = new Properties();
+		props.putAll(loadProperties(Configuration.class
+				.getResourceAsStream("/hidden.properties")));
+		props.putAll(properties);
 
-	public Configuration(final String properties) {
-		props = loadProperties(properties);
+		testName = getRequiredString("test");
+		allCases = toList(getRequiredString("cases"));
+		rootDir = System.getProperty("tests.root.dir", "tests") + separatorChar
+				+ testName;
+		inline = getBoolean("inline", false);
 
-		kitLocation = getRequiredString("kit.location");
-		licenseFileLocation = getString("kit.licenseLocation",
-		"target/terracotta-license.key");
-		testDirectories = getDirectories(toList(getString("directories",
-		"target/ target/dependencies")));
-		classpathRegex = toList(getString("classpath",
-		"*.jar *.xml *.properties"));
-		logRegex = toList(getString("log.collection.ext", "*.jar *.xml .*txt"));
-		mainClass = getRequiredString("main-classname");
-		location = getString("logLocation", "target/");
-		arguments = toList(getString("arguments", ""));
+		try {
+			loadProperties(getRootdir() + separatorChar + defnFileName);
+			log.info("Loaded test definition: " + testName);
+		} catch (IllegalStateException ise) {
+			log.warn("No particular test definition found.");
+		}
+		log.info("Properties: " + props);
+		log.info("Log location: " + getLocation().getAbsolutePath());
 
-		l2machines = toList(getRequiredString("l2machines").toLowerCase());
-		l1machines = toList(getRequiredString("l1machines").toLowerCase());
-		loadmachines = toList(getString("loadmachines", "").toLowerCase());
+		uniqueId = UUID.randomUUID().toString();
+		testCase = null;
+	}
 
-		allmachines.addAll(l2machines);
-		allmachines.addAll(l1machines);
-		allmachines.addAll(loadmachines);
-
-		loadArguments = toList(getString("load-arguments", ""));
-		loadMainClass = (loadmachines.size() > 0) ? getRequiredString("load-main-classname")
-				: "";
-
-		load_jvmArgs = toList(getString("load_jvm_args", ""));
-		l1_jvmArgs = toList(getString("l1_jvm_args", ""));
-		l2_jvmArgs = toList(getString("l2_jvm_args", ""));
-
-		serversPerMirrorGroup = getInteger("serversPerMirrorGroup", 1);
-		dgcEnabled = getBoolean("dgc.enabled", true);
-		dgcInterval = getInteger("dgc.interval", 300);
-		persistence = (getBoolean("persistence.enabled", false)) ? "permanent-store"
-				: "temporary-swap-only";
-
-		clientLogCheck = getString("client.log.check", "");
-		offheapEnabled = getBoolean("l2.offheap.enabled", false);
-		offheapMaxDataSize = getString("l2.offheap.maxDataSize", "1g");
-
-		l1_javaHome = getString("java.home", System.getProperty("java.home"));
-		l2_javaHome = getString("java.home", System.getProperty("java.home"));
-
-		testUniqueId = UUID.randomUUID().toString();
+	/**
+	 * Copy constructor. This is being used to create a copy of
+	 * {@link Configuration} when loading a new test case so that original
+	 * properties are entact.
+	 *
+	 * @param config
+	 *            Configuration
+	 * @param testcase
+	 *            current test case
+	 */
+	public Configuration(final Configuration config, final String testcase) {
+		this.props = new Properties(config.props);
+		this.testName = config.testName;
+		this.allCases = config.allCases;
+		this.uniqueId = config.uniqueId;
+		this.rootDir = config.rootDir;
+		this.inline = config.inline;
+		this.testCase = testcase;
+		try {
+			log.info("Loading properties for test case: " + testcase);
+			loadTestCase(getLocation() + "/" + testcase);
+		} catch (IllegalStateException ise) {
+			log.warn("No particular config found for testcase: " + testcase);
+		}
 	}
 
 	private List<File> getDirectories(final List<String> dirNames) {
 		List<File> directories = new ArrayList<File>();
 		for (String dir : dirNames) {
-			File d = new File(dir);
+			File d = new File(getRootdir(), dir);
 			if (d.isDirectory()) {
 				log.info("Test directories found: " + d.getAbsolutePath());
 				directories.add(d);
@@ -116,178 +138,589 @@ public class Configuration implements Serializable {
 		}
 
 		if (directories.size() == 0)
-			throw new RuntimeException("Test jar directories cant be zero.");
+			throw new IllegalStateException(
+					"Test jar directories cant be zero.");
 
 		return directories;
 	}
 
-	public List<String> getLoad_jvmArgs() {
-		return load_jvmArgs;
+	/**
+	 * @return the list of jvm arguments for load process.
+	 */
+	public List<String> getLoadJvmArgs() {
+		return toList(getString("load_jvm_args", ""));
 	}
 
+	/**
+	 * @return main class name for load process.
+	 */
 	public String getLoadMainClass() {
-		return loadMainClass;
+		return (getLoadmachines().size() > 0) ? getRequiredString("load-main-classname")
+				: "";
 	}
 
+	/**
+	 * @return program arguments for the load process, if any.
+	 */
 	public List<String> getLoadArguments() {
-		return loadArguments;
+		return toList(getString("load-arguments", ""));
 	}
 
+	/**
+	 * @return properties
+	 */
 	public Properties getProps() {
 		return props;
 	}
 
+	/**
+	 * Returns terracotta kit location. If nothing specifies, searches for
+	 * terracotta*.tar.gz files in the root directory. If multiple found uses,
+	 * first one only. Will print the file being used.
+	 *
+	 * @return kit location
+	 */
 	public String getKitLocation() {
-		return kitLocation;
+		String kit = getString("kit.location", "");
+		if (!kit.equals(""))
+			return kit;
+		File current = new File(".");
+		String[] tars = current.list(new FilenameFilter() {
+			public boolean accept(File dir, String name) {
+				return name.matches("terracotta.*tar.gz");
+			}
+		});
+		if (tars.length == 0)
+			throw new IllegalStateException("No terracotta kits found!!");
+		log.info("Terracotta kit (terracotta.*.tar.gz) found: " + tars[0]);
+		return tars[0];
 	}
 
 	/**
 	 * Get the location of the license file on the system
-	 * 
+	 *
 	 * @return the licenseFileLocation
 	 */
 	public String getLicenseFileLocation() {
-		return licenseFileLocation;
+		return getString("kit.licenseLocation", "terracotta-license.key");
 	}
 
+	/**
+	 * @return directories containing the test process jars.
+	 */
 	public List<File> getTestDirectories() {
-		return testDirectories;
+		return getDirectories(toList(getRequiredString("directories")));
 	}
 
+	/**
+	 * @return directories containing the load process jars.
+	 */
+	public List<File> getLoadDirectories() {
+		return getDirectories(toList(getRequiredString("load_directories")));
+	}
+
+	/**
+	 * @return list of regex of the files to be included in the classpath
+	 */
 	public List<String> getClasspathRegex() {
-		return classpathRegex;
+		return toList(getString("classpath", ".*jar .*xml .*properties"));
 	}
 
+	/**
+	 * excludes the ehcache-* or terracotta-* jars to be included in the
+	 * classpath. These jars will be replaced by one found in the terracotta
+	 * installation kit.
+	 *
+	 * @return list of regex of the files to be excluded in the classpath.
+	 */
+	public List<String> getClasspathExclude() {
+		return toList(getString("classpath.exclude", ""));
+	}
+
+	/**
+	 * @return list of the regex of the files to be included in the log
+	 *         collection.
+	 */
 	public List<String> getLogRegex() {
-		return logRegex;
+		return toList(getString("log.collection.ext",
+				".*log .*log\\.[0-9]* .*xml .*txt"));
 	}
 
+	/**
+	 * @return main class for the test process
+	 */
 	public String getMainClass() {
-		return mainClass;
+		return getRequiredString("main-classname");
 	}
 
-	public String getL1_javaHome() {
-		return l1_javaHome;
+	/**
+	 * @return java home to be used for test process
+	 */
+	public String getL1JavaHome() {
+		return getString("l1.java.home", System.getProperty("java.home"));
 	}
 
+	/**
+	 * @return java home to be used for terracotta server
+	 */
 	public String getL2_javaHome() {
-		return l2_javaHome;
+		return getString("l2.java.home", System.getProperty("java.home"));
 	}
 
+	/**
+	 * @return log snippet from the app logs that makes sure that it started
+	 *         successfully
+	 */
 	public String getClientLogCheck() {
-		return clientLogCheck;
+		return getString("client.log.check",
+				"Connection successfully established");
 	}
 
-	public String getTestUniqueId() {
-		return testUniqueId;
+	/**
+	 * @return unique id for each test case
+	 */
+	public String getUniqueId() {
+		return uniqueId;
 	}
 
-	public String getLocation() {
-		return location;
+	private File getDirectory(File parent, String name) {
+		File f = new File(parent, name);
+		try {
+			FileUtils.forceMkdir(f);
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		return f;
 	}
 
+	/**
+	 * @return framework local directory
+	 */
+	public File getLocation() {
+		String log = getString("logLocation",
+				System.getProperty("user.home", "target/"))
+				+ "/perfTests/framework2.0/local";
+		return new File(log);
+	}
+
+	/**
+	 * location to save the results on the local.
+	 *
+	 * @return {@link #getLocation()}/results/
+	 */
+
+	public File getResultLocation() {
+		return getDirectory(getLocation(), "results");
+	}
+
+	/**
+	 * base directory for setup location on the local.
+	 *
+	 * @return {@link #getLocation()}/setup/
+	 */
+	public File getSetupLocation() {
+		return getDirectory(getLocation(), "setup");
+	}
+
+	/**
+	 * setup location for the clients. All application/test jars are downloaded
+	 * here.
+	 *
+	 * @return {@link #getSetupLocation()}/client/
+	 */
+	public File getClientSetupLocation() {
+		return getDirectory(getSetupLocation(), "client");
+	}
+
+	/**
+	 * setup location for the clients. Terracotta kit is downloaded and
+	 * extracted here.
+	 *
+	 * @return {@link #getSetupLocation()}/server/
+	 */
+	public File getServerSetupLocation() {
+		return getDirectory(getSetupLocation(), "server");
+	}
+
+	/**
+	 * setup location for the clients. All load process jars are downloaded
+	 * here.
+	 *
+	 * @return {@link #getSetupLocation()}/load/
+	 */
+	public File getLoadSetupLocation() {
+		return getDirectory(getSetupLocation(), "load");
+	}
+
+	/**
+	 * base directory for all the logs
+	 *
+	 * @return {@link #getLocation()}/logs/
+	 */
+	public File getLogLocation() {
+		return getDirectory(getLocation(), "logs");
+	}
+
+	/**
+	 * Client logs directory.
+	 *
+	 * @return {@link #getLogLocation()}/client/
+	 */
+	public File getClientLogLocation() {
+		return getDirectory(getLogLocation(), "client");
+	}
+
+	/**
+	 * Server logs directory.
+	 *
+	 * @return {@link #getLogLocation()}/server/
+	 */
+	public File getServerLogLocation() {
+		return getDirectory(getLogLocation(), "server");
+	}
+
+	/**
+	 * Load logs directory.
+	 *
+	 * @return {@link #getLogLocation()}/load/
+	 */
+	public File getLoadLogLocation() {
+		return getDirectory(getLogLocation(), "load");
+	}
+
+	/**
+	 * @return list of program arguments for the test process
+	 */
 	public List<String> getArguments() {
-		return arguments;
+		return toList(getString("arguments", ""));
 	}
 
+	/**
+	 * @return list of machines to be used for terracotta server
+	 */
 	public List<String> getL2machines() {
-		return l2machines;
+		return toList(getRequiredString("l2machines").toLowerCase());
 	}
 
+	/**
+	 * @return list of machines to be used for test process
+	 */
 	public List<String> getL1machines() {
-		return l1machines;
+		return toList(getRequiredString("l1machines").toLowerCase());
 	}
 
+	/**
+	 * @return list of machines to be used for load process
+	 */
 	public List<String> getLoadmachines() {
-		return loadmachines;
+		return toList(getString("loadmachines", "").toLowerCase());
 	}
 
-	public List<String> getAllmachines() {
+	/**
+	 * @return list of all machines (unique)
+	 */
+	public Set<String> getAllmachines() {
+		Set<String> allmachines = new HashSet<String>();
+		allmachines.addAll(getL1machines());
+		allmachines.addAll(getL2machines());
+		allmachines.addAll(getLoadmachines());
 		return allmachines;
 	}
 
+	/**
+	 * Since we have multiple processes running on same box and specified
+	 * redundantly in the configuration. This method provides the collection of
+	 * unique L2 agents. Use this if we want to run a particular work only once
+	 * on an agent.
+	 *
+	 * @return the collection of unique L2 agents.
+	 */
+	public Set<String> getUniqueL2Machines() {
+		return new HashSet<String>(getL2machines());
+	}
+
+	/**
+	 * Since we have multiple processes running on same box and specified
+	 * redundantly in the configuration. This method provides the collection of
+	 * unique L1 agents. Use this if we want to run a particular work only once
+	 * on an agent.
+	 *
+	 * @return the collection of unique L1 agents.
+	 */
+	public Set<String> getUniqueL1Machines() {
+		return new HashSet<String>(getL1machines());
+	}
+
+	/**
+	 * Since we have multiple processes running on same box and specified
+	 * redundantly in the configuration. This method provides the collection of
+	 * unique load agents. Use this if we want to run a particular work only
+	 * once on an agent.
+	 *
+	 * @return the collection of unique load agents.
+	 */
+	public Set<String> getUniqueLoadMachines() {
+		return new HashSet<String>(getLoadmachines());
+	}
+
+	/**
+	 * @return Number of server to be included in one mirror group.
+	 */
 	public int getServersPerMirrorGroup() {
-		return serversPerMirrorGroup;
+		return getInteger("serversPerMirrorGroup", 1);
 	}
 
+	/**
+	 * @return Distributed Garbage Collection to be enabled on the server or
+	 *         not.
+	 */
 	public boolean isDgcEnabled() {
-		return dgcEnabled;
+		return getBoolean("dgc.enabled", true);
 	}
 
+	/**
+	 *
+	 * @return Distributed Garbage Collection to be set in tc-config.xml
+	 */
 	public int getDgcInterval() {
-		return dgcInterval;
+		return getInteger("dgc.interval", 300);
 	}
 
+	/**
+	 * @return Persistence mode to be used. <br/>
+	 *         true if permanent-store <br/>
+	 *         false if temporary-swap-only<br/>
+	 */
 	public String getPersistence() {
-		return persistence;
+		return (getBoolean("persistence.enabled", false)) ? "permanent-store"
+				: "temporary-swap-only";
 	}
 
+	/**
+	 * @return true if BigMemory on terracotta server is enabled.
+	 */
 	public boolean isOffheapEnabled() {
-		return offheapEnabled;
+		return getBoolean("l2.offheap.enabled", false);
 	}
 
 	public String getOffheapMaxDataSize() {
-		return offheapMaxDataSize;
+		return getString("l2.offheap.maxDataSize", "1g");
 	}
 
 	public List<String> getL1_jvmArgs() {
-		return l1_jvmArgs;
+		return toList(getString("l1_jvm_args", ""));
 	}
 
 	public List<String> getL2_jvmArgs() {
-		return l2_jvmArgs;
+		return toList(getString("l2_jvm_args", ""));
 	}
 
-	public List<String> toList(final String value) {
+	public boolean isClearLogs() {
+		return getBoolean("logs.clear", true);
+	}
+
+	public String getFwTcConfigParam() {
+		return getString("fw-tc-config-param", "");
+	}
+
+	public String getFwNodeCountParam() {
+		return getString("fw-node-count-param", "");
+	}
+
+	/**
+	 * Returns list of the intervals at which server needs to be crashed. Eg.
+	 * Interval can be "server.restart.localhost-9520: 300 200 100". Server will
+	 * be crashed after 300 secs then 200 secs after that then 100 secs after
+	 * that.
+	 *
+	 * @param serverName
+	 * @return list of integers crash interval converted from string
+	 */
+	public List<Integer> getCrashIntervals(String serverName) {
+		List<String> list = toList(getString("server.restart." + serverName, ""));
+		String port = serverName.substring(serverName.indexOf("952"));
+		if (list.size() == 0)
+			list = toList(getString("server.restart.localhost-" + port, ""));
+		List<Integer> intervals = new ArrayList<Integer>();
+		for (String i : list) {
+			try {
+				intervals.add(Integer.parseInt(i));
+			} catch (NumberFormatException e) {
+				e.printStackTrace();
+			}
+		}
+		return intervals;
+	}
+
+	public int getCrashRepeatCount(String serverName) {
+		return getInteger("server.restart.repeat", -1);
+	}
+
+	public String getServerDataDir(String serverName) {
+		return getString("server.data.dir." + serverName, "");
+	}
+
+	private List<String> toList(final String value) {
 		List<String> list;
 		// If the string is null or empty, return an empty array.
 		if (value == null || value.trim().length() == 0)
 			list = new ArrayList<String>();
-		else
-			list = Arrays.asList(value.split(" "));
+		else {
+			list = Arrays.asList(value.replace("localhost", HOSTNAME)
+					.split(" "));
+		}
 		return Collections.unmodifiableList(list);
 	}
 
-	public Boolean getBoolean(final String key, final boolean defaultValue) {
+	private Boolean getBoolean(final String key, final boolean defaultValue) {
 		return Boolean.valueOf(getString(key, String.valueOf(defaultValue)));
 	}
 
-	public Long getLong(final String key, final long defaultValue) {
-		return Long.valueOf(getString(key, String.valueOf(defaultValue)));
-	}
-
-	public Integer getInteger(final String key, final int defaultValue) {
+	private Integer getInteger(final String key, final int defaultValue) {
 		return Integer.valueOf(getString(key, String.valueOf(defaultValue)));
 	}
 
-	public String getString(final String key, final String defaultValue) {
-		String value = props.getProperty(key);
+	private String getString(final String key, final String defaultValue) {
+		String value = getProperty(key);
 		if (value == null || value.trim().length() == 0) {
-			log.warn("Key not found in Properties: " + key
+			log.debug("Key not found in Properties: " + key
 					+ " , Using defaults: " + defaultValue);
 			props.setProperty(key, defaultValue);
-			return defaultValue;
+			value = defaultValue;
 		}
-		return value.trim();
+		return value.trim()
+				.replaceAll("\\$\\{testcase.properties\\}", testCase);
 	}
 
-	public String getRequiredString(final String key) {
-		String prop = props.getProperty(key);
+	/**
+	 * key.hostname > key
+	 *
+	 * @param key
+	 * @return
+	 */
+	private String getProperty(final String key) {
+		String val;
+		if ((val = props.getProperty(key + DOT + HOSTNAME)) != null)
+			return val;
+		return props.getProperty(key);
+	}
+
+	private String getRequiredString(final String key) {
+		String prop = getProperty(key);
 		if (prop == null) {
-			log.fatal("Required property not found: " + key);
-			System.exit(1);
+			throw new IllegalStateException("Required property not found: "
+					+ key);
 		}
 		return prop.trim();
 	}
 
-	private static Properties loadProperties(final String location) {
-		Properties props = new Properties();
-		try {
-			props.load(new FileInputStream(location));
-		} catch (IOException e) {
-			throw new RuntimeException("Cannot find properties file.", e);
-		}
-		return props;
+	public String getUser() {
+		return getString("user", "unknown");
+	}
+
+	public String getTestName() {
+		return testName;
+	}
+
+	public String getTestCase() {
+		return testCase;
+	}
+
+	public List<String> getAllCases() {
+		return allCases;
+	}
+
+	public int getWorkTimeout() {
+		return getInteger("work.timeout", 600);
+	}
+
+	public String getMasterController() {
+		return getL2machines().get(0);
+	}
+
+	public void setStatusRunning() {
+		this.startTime = new Date();
+		this.status = Status.RUNNING;
+	}
+
+	public void setStatusFinished() {
+		this.endTime = new Date();
+		this.status = Status.FINISHED;
+	}
+
+	public void setStatusFailed(String errorMsg) {
+		this.errorMsg = errorMsg;
+		this.endTime = new Date();
+		this.status = Status.FAILED;
+		log.error(HEADER);
+		log.error("Failure!!");
+		log.error(this.errorMsg);
+		log.error(HEADER);
+	}
+
+	public boolean isRunning() {
+		return Status.RUNNING.equals(this.status);
+	}
+
+	public boolean isFailed() {
+		return Status.FAILED.equals(this.status);
+	}
+
+	public boolean isFinished() {
+		return Status.FINISHED.equals(this.status);
+	}
+
+	public Date getStartTime() {
+		return startTime;
+	}
+
+	public Date getEndTime() {
+		return endTime;
+	}
+
+	public String getResultLog() {
+		return resultLog;
+	}
+
+	public void setResultLog(String resultLog) {
+		this.resultLog = resultLog;
+		if (!isFailed())
+			setStatusFinished();
+	}
+
+	public String getRootdir() {
+		return rootDir;
+	}
+
+	public boolean isInline() {
+		return inline;
+	}
+
+	@Override
+	public String toString() {
+		StringBuilder sb = new StringBuilder();
+		sb.append("Test ID: ").append(uniqueId).append(NL)
+				.append("Test Name: ").append(testName).append(NL)
+				.append("Test Case: ").append(testCase).append(NL)
+				.append("L2: ").append(getL2machines()).append(NL)
+				.append("L1: ").append(getL1machines()).append(NL)
+				.append("Status: ").append(status).append(NL).append(NL)
+				.append("Start Time: ").append(startTime).append(NL);
+		if (!isInline())
+			sb.append("Controller: ").append(getMasterController());
+		if (!isRunning())
+			sb.append("End Time: ").append(endTime).append(NL)
+					.append("Results Log: ").append(resultLog).append(NL);
+
+		if (isFailed())
+			sb.append("Failure Reason: ").append(errorMsg).append(NL);
+
+		return sb.toString();
+	}
+
+	public void loadTestCase(String testcaseFilePath) {
+		this.props.putAll(loadProperties(testcaseFilePath));
+
 	}
 
 }

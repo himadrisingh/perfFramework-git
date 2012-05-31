@@ -11,12 +11,12 @@ import org.apache.log4j.Logger;
 import org.tc.perf.process.ProcessState;
 
 /**
- * 
+ *
  * Utility class that can copy data from an InputStream into an OutputStream.
  * This used to copy output from a running process into a file or console. This
- * also checks for a log snippet on runtime, if found, marks the process state
+ * also checks for a log snippet on runtime, if found, marks the {@link ProcessState}
  * as started.
- * 
+ *
  * @author Himadri Singh
  */
 public class StreamCopier extends Thread {
@@ -61,7 +61,7 @@ public class StreamCopier extends Thread {
 					if (line.toLowerCase().indexOf(logSnippet.toLowerCase()) >= 0
 							|| logSnippet.trim().length() == 0) {
 						isStarted = true;
-						log.info("Process marked STARTED.");
+						log.debug("Process marked STARTED.");
 						state.markStarted();
 					}
 				}

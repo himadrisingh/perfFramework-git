@@ -17,17 +17,20 @@
 			<artifactId>terracotta</artifactId>
 			<version>${terracotta.version}</version>
 		</dependency>
+		<dependency>
+			<groupId>javax.mail</groupId>
+			<artifactId>mail</artifactId>
+			<version>1.4.1</version>
+		</dependency>
+		<dependency>
+			<groupId>net.sf.opencsv</groupId>
+			<artifactId>opencsv</artifactId>
+			<version>2.1</version>
+		</dependency>
 	</dependencies>
 	<description>Monitoring for terracotta cluster</description>
 	<build>
 		<plugins>
-			<plugin>
-				<artifactId>maven-compiler-plugin</artifactId>
-				<configuration>
-					<source>1.5</source>
-					<target>1.5</target>
-				</configuration>
-			</plugin>
 			<plugin>
 				<artifactId>tc-maven-plugin</artifactId>
 				<version>${tc-maven.version}</version>
@@ -41,18 +44,6 @@
 		          </processes>
 				</configuration>
 			</plugin>
-	        <plugin>
-	            <groupId>org.apache.maven.plugins</groupId>
-	            <artifactId>maven-dependency-plugin</artifactId>
-	            <executions>
-	               <execution>
-	                  <goals>
-	                     <goal>copy-dependencies</goal>
-	                  </goals>
-	               </execution>
-	            </executions>
-	         </plugin>
-
 		</plugins>
 	</build>
    <repositories>

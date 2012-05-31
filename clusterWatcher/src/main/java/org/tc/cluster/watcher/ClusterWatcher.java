@@ -1,131 +1,165 @@
 package org.tc.cluster.watcher;
 
-import java.util.ArrayList;
-import java.util.Iterator;
+import static org.tc.cluster.watcher.util.ClusterWatcherProperties.LOG;
 
-import org.apache.log4j.Logger;
-import org.tc.cluster.watcher.logger.AbstractLogger;
+import java.util.List;
+
+import javax.mail.MessagingException;
+import javax.management.ObjectName;
+
 import org.tc.cluster.watcher.logger.StatsLogger;
-import org.tc.cluster.watcher.logger.SystemStatsLogger;
+import org.tc.cluster.watcher.logger.TerracottaStatsLogger;
+import org.tc.cluster.watcher.mail.Mail;
 import org.tc.cluster.watcher.notification.DGCNotificationListener;
 import org.tc.cluster.watcher.notification.OperatorEventsNotificationListener;
 import org.tc.cluster.watcher.util.ClusterWatcherProperties;
 import org.tc.cluster.watcher.util.Utils;
 
+public class ClusterWatcher implements Runnable {
+	private static final String NL = "\n";
 
-public class ClusterWatcher {
-	private static final Logger LOG = Logger.getLogger(ClusterWatcher.class);
-	private static final Logger FATAL = Logger.getLogger("fatalLogs");
+	private final ClusterWatcherProperties props;
+	private final StatsLogger tcStats;
+	private final DGCNotificationListener dgcListener;
+	private final OperatorEventsNotificationListener opsEventsListener;
 
-	private int lowTxrProbeCount;
-	private int clusterDownProbeCount;
-	private int missingClientsProbeCount;
-	private final AbstractLogger tcStats = new StatsLogger();
-	private final AbstractLogger sysStats = new SystemStatsLogger();
+	private int lowTxrProbeCount, clusterDownProbeCount,
+			missingClientsProbeCount, serverDownProbeCount;
+	private List<MirrorGroup> clusterList;
+	private Mail mail;
 
-	private ArrayList<MirrorGroup> clusterList;
+	public ClusterWatcher(ClusterWatcherProperties p) {
+		props = p;
+		tcStats = new TerracottaStatsLogger(p.getTerracottaStatsLog());
 
-	public ClusterWatcher() throws Exception {
 		int count = 0;
 		do {
-			this.clusterList = Utils.getHostAndJMXStringFromTcConfig(ClusterWatcherProperties.TC_CONFIG);
-			if (this.clusterList == null){
+			this.clusterList = Utils.getHostAndJMXStringFromTcConfig(props
+					.getTcConfig());
+			if (this.clusterList == null) {
 				LOG.error("Cluster is not up. Retrying in 5 secs...");
-				Thread.sleep(5000);
-				count++;
+				try {
+					Thread.sleep(5000);
+				} catch (InterruptedException e) {
+					e.printStackTrace();
+				}
 			}
-		} while (clusterList == null & count < ClusterWatcherProperties.INITIAL_RETRIES);
-		if (clusterList == null){
-			throw new Exception("Cluster is not up.");
+		} while (clusterList == null && count++ < props.getInitialRetries());
+
+		if (clusterList == null)
+			throw new IllegalStateException("Cluster is not up.");
+
+		for (MirrorGroup mg : clusterList)
+			LOG.info(mg);
+
+		ServerStat serverStat = getActiveCoordinator();
+		dgcListener = DGCNotificationListener.create(props.getDgcStatsLog());
+		opsEventsListener = OperatorEventsNotificationListener.create(
+				serverStat, props.getOpsStatsLog());
+		serverStat.registerDgcNotificationListener(dgcListener);
+		serverStat.registerEventNotificationListener(opsEventsListener);
+
+		try {
+			mail = new Mail(props.getSmtpServer(), props.getRecipients());
+			if (props.getSmtpPasswd() != null
+					&& props.getSmtpUsername() != null)
+				mail.setAuthentication(props.getSmtpUsername(),
+						props.getSmtpPasswd());
+		} catch (IllegalArgumentException e) {
+			LOG.error(String.format(
+					"Initialization failed for SMTP: %s & RECIPIENTS: %s",
+					props.getSmtpServer(), props.getRecipients()));
 		}
-
-		ServerStat active = getActiveCoordinator();
-		registerEvents(active);
-
 		LOG.info("ClusterWatcher initialized. Cluster: ");
-		Iterator<MirrorGroup> iterator = clusterList.iterator();
-		int i = 0;
-		while (iterator.hasNext()) {
-			MirrorGroup mg = iterator.next();
-			LOG.info("Mirror Group " + ++i + ": " + mg);
-		}
 	}
 
-	private void registerEvents(ServerStat active){
-		try {
-			active.registerDsoNotificationListener(new DGCNotificationListener());
-		} catch (Exception e) {
-			LOG.error("Error in registering DSO Notification Listener : "
-					+ e.getMessage());
-		}
-		try {
-			active.registerEventNotificationListener(new OperatorEventsNotificationListener(active));
-		} catch (Exception e) {
-			LOG
-			.error("Error in registering Event Notification Listener. Are u running OS kit? : "
-					+ e.getMessage());
-		}
+	private void shutdown() {
+		tcStats.close();
+		LOG.removeAllAppenders();
+		for (MirrorGroup mg : clusterList)
+			for (ServerStat s : mg.servers())
+				s.shutdown();
+		LOG.info("ClusterWatcher exited.");
 	}
 
 	public void run() {
+		int mail_interval = 1;
 		while (true) {
 			try {
-				Thread.sleep(ClusterWatcherProperties.PROBE_INTERVAL);
+				Thread.sleep(props.getProbeInterval());
 			} catch (InterruptedException e) {
-				LOG.info("ClusterWatcher Finished.");
+				shutdown();
 				return;
 			}
-			if (!allServerOnline()){
-				FATAL.error("##### ALL SERVERS ARE NOT ONLINE. #####");
+			if (!allServerOnline()) {
+				LOG.fatal("ALL SERVERS ARE NOT ONLINE. Count: "
+						+ serverDownProbeCount++ + " , Threshold: "
+						+ props.getServerDownMaxCheck());
+				check(serverDownProbeCount == props.getServerDownMaxCheck(),
+						"One of the servers is down. Threshold of "
+								+ props.getServerDownMaxCheck());
+
 			}
 			ServerStat serverStat = getActiveCoordinator();
 			if (serverStat != null) {
+				if (clusterDownProbeCount != 0){
+					serverStat.registerDgcNotificationListener(dgcListener);
+					serverStat.registerEventNotificationListener(opsEventsListener);
+					clusterDownProbeCount = 0;
+				}
 				LOG.info(serverStat + " is ACTIVE-COORDINATOR");
-				clusterDownProbeCount = 0;
 				try {
 					checkClients(serverStat);
 					checkLowTxnRate(serverStat);
 					tcStats.logStats(serverStat);
-					sysStats.logStats(serverStat);
 				} catch (NotConnectedException e) {
-					FATAL.error(e.getMessage());
+					LOG.debug(e.getMessage());
+					LOG.error(e.getLocalizedMessage());
 				}
 			} else {
-				if(!ClusterWatcherProperties.CHECK_CLUSTER_DOWN){
-					LOG.fatal("Cluster down check is not enabled. " +
-					"To enable add property. cluster.down.check : true");
+				if (!props.isCheckClusterDown()
+						&& clusterDownProbeCount == props
+								.getClusterDownMaxCheck()) {
+					LOG.fatal("Cluster down check is not enabled. "
+							+ "To enable add property. cluster.down.check : true");
+					shutdown();
 					return;
 				}
 				clusterDownProbeCount++;
 				LOG.warn("No ACTIVE-COORDINATOR found !!! Count: "
 						+ clusterDownProbeCount + ", Threshold: "
-						+ ClusterWatcherProperties.CLUSTER_DOWN_MAX_CHECK);
-				check(
-						clusterDownProbeCount == ClusterWatcherProperties.CLUSTER_DOWN_MAX_CHECK,
+						+ props.getClusterDownMaxCheck());
+				check(clusterDownProbeCount == props.getClusterDownMaxCheck(),
 						"Cant find Active-Coordinator. Threshold of "
-						+ ClusterWatcherProperties.CLUSTER_DOWN_MAX_CHECK);
+								+ props.getClusterDownMaxCheck());
 			}
 			checkMaxActiveServers();
+			long i = props.getMailInterval() * 1000 / props.getProbeInterval();
+			if (i == 0)
+				i = 10;
+			if (mail_interval++ % i == 0)
+				sendMail("OK");
 		}
 	}
 
+	/**
+	 * Search for active co-ordinator
+	 *
+	 * @return {@link ServerStat} active coordinator
+	 */
+
 	private ServerStat getActiveCoordinator() {
-		ServerStat activeCoordinator = null;
-		Iterator<MirrorGroup> iterator = clusterList.iterator();
-		while (iterator.hasNext()) {
-			MirrorGroup group = iterator.next();
-			activeCoordinator = group.getActiveCoordinator();
-			if (activeCoordinator != null) {
+		for (MirrorGroup group : clusterList) {
+			ServerStat activeCoordinator = group.getActiveCoordinator();
+			if (activeCoordinator != null){
 				return activeCoordinator;
 			}
 		}
-		return activeCoordinator;
+		return null;
 	}
 
 	private boolean allServerOnline() {
-		Iterator<MirrorGroup> iterator = clusterList.iterator();
-		while (iterator.hasNext()) {
-			MirrorGroup group = iterator.next();
+		for (MirrorGroup group : clusterList) {
 			if (!group.isAllServerOnline())
 				return Boolean.FALSE;
 		}
@@ -133,70 +167,111 @@ public class ClusterWatcher {
 	}
 
 	private void checkMaxActiveServers() {
-		Iterator<MirrorGroup> iterator = clusterList.iterator();
-		while (iterator.hasNext()) {
+		for (MirrorGroup group : clusterList) {
 			// check for at most one active server per mirror group
-			MirrorGroup group = iterator.next();
 			int clusterCheckProbeCount = group.getClusterCheckProbeCount();
-			check(clusterCheckProbeCount == ClusterWatcherProperties.ONE_ACTIVE_MAX_CHECK,
-					"Cluster " + group.toString() + " health failure: "
-					+ group.getActiveServerCount()
-					+ " active server(s) ");
+			check(clusterCheckProbeCount == props.getOneActiveMaxCheck(),
+					String.format("%s health failure: %s active server(s) ",
+							group, group.getActiveServerCount()));
 		}
 	}
 
-	private void checkLowTxnRate(ServerStat serverStat) throws NotConnectedException {
+	private void checkLowTxnRate(ServerStat serverStat)
+			throws NotConnectedException {
+		if (!props.isCheckWriteTps())
+			return;
 		long txr = serverStat.getDsoMbean().getTransactionRate();
-		if (txr >= ClusterWatcherProperties.LOW_TXR_THRESHOLD)
+		if (txr >= props.getLowTxnThreshold())
 			lowTxrProbeCount = 0;
 		else {
 			lowTxrProbeCount++;
-			LOG.warn("Low-Txn-Rate: Curr: " + lowTxrProbeCount + " , MAX: "
-					+ ClusterWatcherProperties.LOW_TXR_MAX_CHECK);
+			LOG.warn(String.format("Low-Txn-Rate (%d tps): Curr: %d , MAX: %d",
+					txr, lowTxrProbeCount, props.getLowTxnMaxCheck()));
 		}
-
-		check(lowTxrProbeCount == ClusterWatcherProperties.LOW_TXR_MAX_CHECK,
+		check(lowTxrProbeCount == props.getLowTxnMaxCheck(),
 				"Transaction rate goes below threshold of "
-				+ ClusterWatcherProperties.LOW_TXR_THRESHOLD);
+						+ props.getLowTxnThreshold());
 	}
 
-	private void checkClients(ServerStat serverStat) throws NotConnectedException {
+	private void checkClients(ServerStat serverStat)
+			throws NotConnectedException {
 		int connectedClients = serverStat.getDsoMbean().getClients().length;
-		long expectedClients = ClusterWatcherProperties.CLIENT_COUNTS;
+		long expectedClients = props.getClientCount();
 		LOG.info("expected " + expectedClients + " got: " + connectedClients
 				+ " clients");
 		missingClientsProbeCount = (connectedClients < expectedClients ? (missingClientsProbeCount + 1)
 				: 0);
-		check(missingClientsProbeCount == ClusterWatcherProperties.MISSING_CLIENT_MAX_CHECK,
+		check(missingClientsProbeCount == props.getMissingClientMaxCheck(),
 				"Expecting [" + expectedClients + "] but got ["
-				+ connectedClients + "]");
+						+ connectedClients + "]");
 	}
 
 	private void check(boolean condition, String msg) {
 		if (condition) {
-			FATAL.error(msg);
-			Iterator<MirrorGroup> mg  = clusterList.iterator();
-			while (mg.hasNext()){
-				Iterator<ServerStat> st = mg.next().iterator();
-				while (st.hasNext()){
+			LOG.error(msg);
+			sendMail(msg);
+			for (MirrorGroup mg : clusterList) {
+				for (ServerStat st : mg.servers()) {
 					try {
-						st.next().getL2DumperMbean().dumpClusterState();
+						st.dumpClusterState();
 					} catch (NotConnectedException e) {
-						LOG.error(e.getMessage());
+						LOG.debug(e.getMessage());
+						LOG.error(e.getLocalizedMessage());
 					}
 				}
 			}
-			// LOG.info("Resetting all probe counts.");
-			// lowTxrProbeCount = 0;
-			// clusterDownProbeCount = 0;
-			// missingClientsProbeCount = 0;
+//			LOG.debug("Resetting all probe counts.");
+//			lowTxrProbeCount = 0;
+//			clusterDownProbeCount = 0;
+//			missingClientsProbeCount = 0;
 		}
 	}
 
-	public static void main(String[] arg) throws Exception {
-		String propertyFile = System.getProperty("test.properties","src/main/resources/test.properties");
-		ClusterWatcherProperties.loadProperties(propertyFile);
-		new ClusterWatcher().run();
+	private void sendMail(String error) {
+		if (mail == null)
+			return;
+		LOG.error("Sending mail...");
+		try {
+			mail.send("Cluster-watcher report", "Status: " + error + NL + NL
+					+ summary());
+		} catch (NotConnectedException e) {
+			LOG.debug(e.getMessage());
+			LOG.error(e.getLocalizedMessage());
+		} catch (MessagingException e) {
+			e.printStackTrace();
+		}
 	}
 
+	private String summary() throws NotConnectedException {
+		StringBuilder sb = new StringBuilder();
+		sb.append(props).append(NL);
+		for (MirrorGroup gp : clusterList) {
+			sb.append("All Server Online: " + gp.isAllServerOnline())
+					.append(NL);
+			ServerStat active = gp.getActiveCoordinator();
+			if (active == null) {
+				sb.append("Active Coordinator: " + false).append(NL);
+			} else {
+				sb.append("Active Coordinator: " + active).append(NL);
+				ObjectName[] clients = active.getDsoMbean().getClients();
+				sb.append("Clients Connected: " + clients.length).append(NL);
+				sb.append(
+						"Txn Rate: "
+								+ active.getDsoMbean().getTransactionRate())
+						.append(NL);
+			}
+		}
+		sb.append(NL).append(NL);
+		sb.append(tcStats.snapshot());
+		return sb.toString();
+	}
+
+	public static void main(String[] arg) throws Exception {
+		String propertyFile = System.getProperty("test.properties",
+				"src/main/resources/test.properties");
+		ClusterWatcherProperties props = new ClusterWatcherProperties(
+				propertyFile);
+		ClusterWatcher cw = new ClusterWatcher(props);
+		cw.run();
+	}
 }

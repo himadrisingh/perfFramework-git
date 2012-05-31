@@ -1,55 +1,62 @@
 package org.tc.perf;
 
-import static org.tc.perf.util.SharedConstants.HOSTNAME;
+import static org.tc.perf.util.Utils.HOSTNAME;
+import static org.tc.perf.util.Utils.loadProperties;
 
 import org.apache.log4j.Logger;
-import org.tc.perf.util.Configuration;
+import org.tc.perf.work.Work;
 
 /**
- * BootStrap class is used <li>to start Master</li> <li>to start Agent</li> <li>
- * to list running tests</li> <li>to kill a running test</li>
- * 
+ * BootStrap class is used to <li>Start the test process</li> <li>Start Agent</li>
+ * <li>
+ * List running tests</li> <li>Stop a running test</li> <li>Take perf framework
+ * state dump for debugging purposes.</li>
+ *
  * @author Himadri Singh
- * 
+ *
  */
 public class BootStrap {
 
 	private static final Logger log = Logger.getLogger(BootStrap.class);
 
 	private static enum CMD {
-		AGENT, MASTER, LIST, KILL
+		AGENT, MASTER, LIST, KILL, DUMP
 	};
 
 	private static final String tcConfigSample = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-		+ "  <tc:tc-config xsi:schemaLocation=\"http://www.terracotta.org/config http://www.terracotta.org/schema/terracotta-4.xsd\">\n"
-		+ "    <servers>\n"
-		+ "      <server host=\"%i\" name=\"%i\">\n"
-		+ "        <dso-port>8510</dso-port>\n"
-		+ "      <server>\n"
-		+ "    <servers>\n" + "  </tc:tc-config>\n";
+			+ "  <tc:tc-config xsi:schemaLocation=\"http://www.terracotta.org/config "
+			+ "http://www.terracotta.org/schema/terracotta-4.xsd\">\n"
+			+ "    <servers>\n"
+			+ "      <server host=\"%i\" name=\"%i\">\n"
+			+ "        <dso-port>8510</dso-port>\n"
+			+ "      <server>\n"
+			+ "    <servers>\n" + "  </tc:tc-config>\n";
 
 	/**
 	 * Start Master process using the configuration provided.
-	 * 
-	 * @param arg
+	 *
+	 * @see Master#run()
+	 * @param props
 	 *            configuration file path to be used to load the test.
 	 */
 
-	public static final void runMaster(final String arg) {
-		if (arg == null) {
+	public static final void runMaster(final String props) {
+		if (props == null) {
 			printHelp();
 			return;
 		}
 		log.info(String.format(
 				"Starting performance framework master on %s ...", HOSTNAME));
-		Configuration config = new Configuration(arg);
-		Master master = new Master(config);
+		Master master = new Master(loadProperties(props));
 		master.run();
 	}
 
 	/**
 	 * Start the agent. It will connect to the terracotta server and ready for
-	 * any work provided to it.
+	 * any work alloted to it.
+	 *
+	 * @see Agent
+	 * @see Work
 	 */
 	public static final void runAgent() {
 		log.info(String.format("Starting Test Framework agent on %s...",
@@ -63,49 +70,53 @@ public class BootStrap {
 	 */
 	public static final void printHelp() {
 		log.info("Welcome to Terracotta distributed test framework.");
-		log
-		.info("Need to start a Terracotta server at port 8510 for framework.");
-		log
-		.info("Provide the tc config url as system properties \"fw.tc.config\" to master/agent process to connect to tc-server.");
-		log.info(" eg: -Dfw.tc.config=<tc-server-hostname>:<dso-port>\n");
-		log
-		.info("Usage: \t"
+		log.info("Need to start a Terracotta server at port 8510 for framework.");
+		log.info("Usage: \t"
 				+ BootStrap.class.getName()
-				+ "  [ MASTER <test-configuration-file>  |  AGENT  |  LIST  |  KILL <test-id> ] ");
+				+ "  [ MASTER <test-configuration-file>  |  AGENT  |  LIST  |  KILL <test-id> | DUMP ] ");
 		log.info("MASTER \t\tStarts master process to load the test.");
 		log.info("\t\t\tIt needs <test-configuration-file> as argument.");
 		log.info("AGENT \t\tStarts agent process. ");
-		log
-		.info("LIST \t\tLists the tests running (unique ids) in the framework");
+		log.info("LIST \t\tLists the tests running (unique ids) in the framework");
 		log.info("\t\t\talong with the machines being used.");
 		log.info("KILL \t\tKills the test. Needs the test unique id.\n");
-		log
-		.info("Sample tc-config to start terracotta-server at port 8510:\n\n"
+		log.info("DUMP \t\tDumps the state of perf framework for debugging purpose.\n");
+		log.info("Sample tc-config to start terracotta-server at port 8510:\n\n"
 				+ tcConfigSample);
 	}
 
 	/**
-	 * lists the running tests in the test framework.
+	 * @see MasterController#listRunningTests()
 	 */
 	public static final void listTests() {
-		Helper hlp = new Helper();
-		hlp.listRunningTests();
+		//FIXME: restrict using null here
+		new MasterController(null).listRunningTests();
+	}
+	/**
+	 * @see MasterController#clearFramework()
+	 */
+	public static final void clearFramework() {
+		new MasterController(null).clearFramework();
 	}
 
 	/**
-	 * Kills a running tests. It needs test-unique-id which can be listed using
-	 * listsTests
-	 * 
+	 * @see MasterController#dumpState()
+	 */
+	public static final void dumpState(){
+		new MasterController(null).dumpState();
+	}
+
+	/**
+	 * @see MasterController#killTest(String)
 	 * @param uniqueId
-	 *            test unique id.
+	 *            unique id alloted to the test
 	 */
 	public static final void killTest(String uniqueId) {
 		if (uniqueId == null) {
 			printHelp();
 			return;
 		}
-		Helper hlp = new Helper();
-		hlp.killTest(uniqueId.trim());
+		new MasterController(null).killTest(uniqueId.trim());
 	}
 
 	public static void main(final String[] args) {
@@ -114,12 +125,20 @@ public class BootStrap {
 
 			switch (cmd) {
 			case MASTER:
+				if (args.length < 2){
+					printHelp();
+					System.exit(1);
+				}
 				runMaster(args[1]);
 				break;
 			case AGENT:
 				runAgent();
 				break;
 			case KILL:
+				if (args.length < 2){
+					printHelp();
+					System.exit(1);
+				}
 				killTest(args[1]);
 				break;
 			case LIST:

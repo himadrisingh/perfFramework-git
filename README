@@ -1,7 +1,6 @@
-- Compile project
+- Compile project and create distributable package
 	mvn clean install
 
-- Create distributable package. 
-        cd perfFramework
-	mvn assembly:assembly
+Distributable zip at <root>\fw-packaging\target\perfFramework.zip
 
+Check README in the distributable zip file for more details.

@@ -1,0 +1,29 @@
+# =====================================================
+# test properties
+# =====================================================
+
+# main-classname: main class name that should start the test
+
+main-classname: <MAIN CLASS>
+
+# arguments: arguments to be passed, can be properties file (that should be in classpath)
+
+arguments: <PROGRAM ARGUMENTS>
+
+
+# Clustered tests generally need variables for number of nodes and tc-config.xml path
+# Perf f/w will substitute those values with test dependent value. Just list the variable names here.
+
+fw-tc-config-param: expressTerracottaUrl
+fw-node-count-param: numOfNodes
+
+
+# =====================================================
+
+directories: code/target/
+
+# classpath: files to be included in classpath. Java regex patterns are allowed.
+classpath: .*jar .*xml .*properties
+
+classpath.exclude: ehcache-.*jar terracotta.*jar
+

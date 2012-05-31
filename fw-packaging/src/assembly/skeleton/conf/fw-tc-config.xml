@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tc:tc-config xmlns:tc="http://www.terracotta.org/config"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.terracotta.org/schema/terracotta-6.xsd">
+	<servers>
+		<server host="%i" name="FW_TC_SERVER">
+			<dso-port>8510</dso-port>
+			<data>%(user.home)/test-fw/server/data-8520</data>
+			<logs>%(user.home)/test-fw/server/logs-8520</logs>
+			<statistics>%(user.home)/test-fw/server/statistics-8520</statistics>
+		</server>
+	</servers>
+	<clients>
+		<logs>%(user.home)/test-fw/clients/%D</logs>
+	</clients>
+</tc:tc-config>

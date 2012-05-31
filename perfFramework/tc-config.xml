@@ -12,9 +12,4 @@
   <clients>
     <logs>target/terracotta/client/logs/%D</logs>
   </clients>
-  <application>
-    <dso>
-      <instrumented-classes/>
-    </dso>
-  </application>
 </tc:tc-config>

@@ -1,36 +1,33 @@
 package org.tc.cluster.watcher;
 
-import java.util.ArrayList;
-import java.util.Iterator;
+import static org.tc.cluster.watcher.util.ClusterWatcherProperties.LOG;
 
-import org.apache.log4j.Logger;
+import java.util.ArrayList;
+import java.util.List;
 
 public class MirrorGroup {
-	private static final Logger LOG = Logger.getLogger(MirrorGroup.class);
 	private static final String   ACTIVE_COORDINATOR = "ACTIVE-COORDINATOR";
 
 	private int clusterCheckProbeCount = 0;
-	private final ArrayList<ServerStat> members	= new ArrayList<ServerStat>();
+	private final List<ServerStat> members	= new ArrayList<ServerStat>();
 
 	public void addMember (ServerStat server){
 		members.add(server);
 	}
 
-	public Iterator<ServerStat> iterator(){
-		return members.iterator();
+	public List<ServerStat> servers(){
+		return members;
 	}
 
 	public int getActiveServerCount(){
 		int count	= 0;
-		Iterator<ServerStat> iterator = iterator();
-		ServerStat server;
-		while (iterator.hasNext()){
-			server = iterator.next();
+		for (ServerStat server : members) {
 			try {
 				if (server.getInfoBean().isActive())
 					count++;
 			} catch (NotConnectedException e) {
-				LOG.error(e.getMessage());
+				LOG.error(e.getLocalizedMessage());
+				LOG.debug(e.getMessage());
 			}
 		}
 		LOG.debug("No. of Active Server(s) in " + this.toString() + " : "+count);
@@ -43,10 +40,7 @@ public class MirrorGroup {
 	}
 
 	public boolean isAllServerOnline(){
-		Iterator<ServerStat> iterator = iterator();
-		ServerStat server 	= null;
-		while (iterator.hasNext()){
-			server = iterator.next();
+		for (ServerStat server : members) {
 			if (!server.isConnected())
 				return Boolean.FALSE;
 		}
@@ -54,11 +48,8 @@ public class MirrorGroup {
 	}
 
 	public ServerStat getActiveCoordinator(){
-		Iterator<ServerStat> iterator = iterator();
 		ServerStat activeCoordinator = null;
-		ServerStat server 	= null;
-		while (iterator.hasNext()){
-			server = iterator.next();
+		for (ServerStat server : members) {
 			try {
 				if (ACTIVE_COORDINATOR.equals(server.getInfoBean().getState())) {
 					if (activeCoordinator == null)
@@ -67,7 +58,8 @@ public class MirrorGroup {
 						LOG.error("Multiple Active Server in a Mirror Group.");
 				}
 			} catch (NotConnectedException e) {
-				LOG.error(e.getMessage());
+				LOG.error(e.getLocalizedMessage());
+				LOG.debug(e.getMessage());
 			}
 		}
 		return activeCoordinator;
@@ -76,10 +68,7 @@ public class MirrorGroup {
 	@Override
 	public String toString(){
 		StringBuilder str = new StringBuilder().append("Mirror-Group = [ ");
-		Iterator<ServerStat> iterator = iterator();
-		ServerStat server 	= null;
-		while (iterator.hasNext()){
-			server = iterator.next();
+		for (ServerStat server : members) {
 			if (server != null)
 				str.append(server.host).append(":")
 				.append(server.port).append(" ");

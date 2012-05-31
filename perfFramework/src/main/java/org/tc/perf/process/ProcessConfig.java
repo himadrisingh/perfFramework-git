@@ -1,23 +1,26 @@
 package org.tc.perf.process;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
 /**
- * 
+ *
  * This class is used to define the arguments needed to start a java process.
- * 
+ *
  * @author Himadri Singh
  */
 public class ProcessConfig {
 
-	private final List<String> defaultArgs = Arrays.asList(
-			"-XX:+HeapDumpOnOutOfMemoryError", "-verbose:gc",
-			"-XX:+PrintGCTimeStamps", "-XX:+PrintGCDetails",
-			"-Dcom.sun.management.jmxremote", "-showversion",
-			"-Dcom.sun.management.jmxremote.ssl=false",
-	"-Dcom.sun.management.jmxremote.authenticate=false");
+	private final List<String> defaultArgs = new ArrayList<String>(
+			Arrays.asList("-XX:+HeapDumpOnOutOfMemoryError", "-verbose:gc",
+					"-XX:+PrintGCTimeStamps", "-XX:+PrintGCDetails",
+					"-Dcom.sun.management.jmxremote", "-showversion",
+					"-Dcom.sun.management.jmxremote.ssl=false",
+					"-Dtc.ssl.trustAllCerts=true",
+					"-Dtc.ssl.disableHostnameVerifier=true",
+					"-Dcom.sun.management.jmxremote.authenticate=false"));
 
 	/**
 	 * the main class to be start a java process.
@@ -38,12 +41,12 @@ public class ProcessConfig {
 	 * the location from where java process should be started so that relative
 	 * paths, if any, are maintained.
 	 */
-	private String location = "";
+	private File location = new File(".");
 
 	/**
 	 * relative path to the log directory
 	 */
-	private String relativeLogDir = "./";
+	private File logsDir = new File(".");
 
 	/**
 	 * the list of jvm arguments
@@ -63,10 +66,41 @@ public class ProcessConfig {
 	/**
 	 * log filename that contains the console output.
 	 */
-	private String consoleLog = "start.log";
+	private final String consoleLog;
 
-	public ProcessConfig(String mainClass) {
+	/**
+	 * process will be restarted if killed.
+	 */
+
+	private List<Integer> crashIntervals = new ArrayList<Integer>();
+
+	/**
+	 * Repeat crashing of server -1 : indefinitely
+	 */
+	private int crashRepeatCount = -1;
+
+	private final String verboseGcLog;
+
+	private final String processName;
+
+	/**
+	 * Process Config requires main-class name and process name. processName
+	 * will be used for various loggings.
+	 *
+	 * @param mainClass
+	 *            main-class name to execute the java process
+	 * @param processName
+	 *            unique process name
+	 */
+	public ProcessConfig(String mainClass, String processName) {
 		this.mainClass = mainClass;
+		String userHome = System.getProperty("user.home");
+		if (userHome != null && !userHome.isEmpty())
+			defaultArgs.add("-XX:HeapDumpPath=" + userHome + File.separator
+					+ "perf-fw-heapdumps");
+		this.processName = processName;
+		this.consoleLog = processName + "-console.log";
+		this.verboseGcLog = processName + "-verbose-gc.log";
 	}
 
 	public String getClasspath() {
@@ -87,21 +121,23 @@ public class ProcessConfig {
 		return this;
 	}
 
-	public String getLocation() {
+	public File getLocation() {
 		return location;
 	}
 
-	public ProcessConfig setLocation(String location) {
+	public ProcessConfig setLocation(File location) {
 		this.location = location;
 		return this;
 	}
 
-	public String getRelativeLogDir() {
-		return relativeLogDir;
+	public File getLogsDir() {
+		return logsDir;
 	}
 
-	public ProcessConfig setRelativeLogDir(String relativeLogDir) {
-		this.relativeLogDir = relativeLogDir;
+	public ProcessConfig setLogsDir(File logsDir) {
+		this.logsDir = logsDir;
+		this.defaultArgs.add("-Xloggc:"
+				+ new File(logsDir, this.verboseGcLog).getAbsolutePath());
 		return this;
 	}
 
@@ -140,12 +176,43 @@ public class ProcessConfig {
 		return this;
 	}
 
-	public String getConsoleLog() {
-		return consoleLog;
+	public File getConsoleLog() {
+		return new File(logsDir, consoleLog);
 	}
 
-	public void setConsoleLog(String consoleLog) {
-		this.consoleLog = consoleLog;
+	public File getVerboseGcLog() {
+		return new File(logsDir, verboseGcLog);
+	}
+
+	public List<Integer> getCrashIntervals() {
+		return crashIntervals;
+	}
+
+	public ProcessConfig setCrashIntervals(List<Integer> crashIntervals) {
+		this.crashIntervals = crashIntervals;
+		return this;
+	}
+
+	public int getCrashRepeatCount() {
+		return crashRepeatCount;
+	}
+
+	public ProcessConfig setCrashRepeatCount(int crashRepeatCount) {
+		this.crashRepeatCount = crashRepeatCount;
+		return this;
+	}
+
+	public String getProcessName() {
+		return processName;
+	}
+
+	@Override
+	public String toString() {
+		StringBuilder sb = new StringBuilder();
+		sb.append(mainClass).append(" ");
+		for (String arg : arguments)
+			sb.append(arg).append(" ");
+		return sb.toString();
 	}
 
 }
